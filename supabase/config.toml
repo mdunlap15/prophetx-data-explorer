@@ -1,1 +1,4 @@
 project_id = "wdknwmgqggtcayrdjvuu"
+
+[functions.prophetx-proxy]
+verify_jwt = false

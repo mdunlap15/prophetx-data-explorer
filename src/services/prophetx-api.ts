@@ -45,19 +45,23 @@ export interface TreeNode {
   };
 }
 
-const BASE_URL = 'https://ss-sandbox.betprophet.co';
+const EDGE_FUNCTION_URL = 'https://wdknwmgqggtcayrdjvuu.supabase.co/functions/v1/prophetx-proxy';
 
 class ProphetXAPI {
   private accessToken: string | null = null;
   private rateLimitRemaining: number = 100;
 
   async authenticate(accessKey: string, secretKey: string): Promise<string> {
-    const response = await fetch(`${BASE_URL}/v1/token`, {
+    const response = await fetch(EDGE_FUNCTION_URL, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify({ accessKey, secretKey }),
+      body: JSON.stringify({
+        method: 'POST',
+        endpoint: '/v1/token',
+        body: { accessKey, secretKey }
+      }),
     });
 
     if (!response.ok) {
@@ -91,11 +95,16 @@ class ProphetXAPI {
 
     await this.checkRateLimit();
 
-    const response = await fetch(`${BASE_URL}${endpoint}`, {
+    const response = await fetch(EDGE_FUNCTION_URL, {
+      method: 'POST',
       headers: {
-        'Authorization': `Bearer ${this.accessToken}`,
         'Content-Type': 'application/json',
       },
+      body: JSON.stringify({
+        method: 'GET',
+        endpoint,
+        accessToken: this.accessToken
+      }),
     });
 
     this.updateRateLimit(response);
