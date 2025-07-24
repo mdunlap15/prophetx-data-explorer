@@ -155,91 +155,152 @@ class ProphetXAPI {
   }
 
   async getMarkets(eventId: number): Promise<MMMarket[]> {
-    const response = await this.makeRequest<{ data: { markets: MMMarket[] } }>(`/mm/get_markets?event_id=${eventId}`);
-    return response.data.markets;
+    try {
+      const response = await this.makeRequest<{ data: { markets: MMMarket[] | null } }>(`/mm/get_markets?event_id=${eventId}`);
+      
+      // Handle null markets response
+      if (!response.data.markets) {
+        console.log(`No markets found for event ${eventId}`);
+        return [];
+      }
+      
+      return response.data.markets;
+    } catch (error) {
+      console.error(`Failed to get markets for event ${eventId}:`, error);
+      return [];
+    }
   }
 
   async buildHierarchy(): Promise<TreeNode[]> {
-    console.log('Fetching tournaments with active events...');
-    const tournaments = await this.getTournaments();
-    const treeNodes: TreeNode[] = [];
+    try {
+      console.log('Fetching tournaments with active events...');
+      const tournaments = await this.getTournaments();
+      const treeNodes: TreeNode[] = [];
 
-    // Limit to first 3 tournaments for demo
-    const limitedTournaments = tournaments.slice(0, 3);
+      // Limit to first 3 tournaments for demo
+      const limitedTournaments = tournaments.slice(0, 3);
 
-    for (const tournament of limitedTournaments) {
-      console.log(`Fetching events for tournament: ${tournament.name}`);
-      const events = await this.getEvents(tournament.id);
-      
-      // Limit to first 3 events per tournament
-      const limitedEvents = events.slice(0, 3);
-      
-      const tournamentNode: TreeNode = {
-        id: tournament.id.toString(),
-        name: tournament.name,
-        type: 'tournament',
-        children: [],
-      };
-
-      for (const event of limitedEvents) {
-        console.log(`Fetching markets for event: ${event.name}`);
-        const markets = await this.getMarkets(event.event_id);
-        
-        const eventNode: TreeNode = {
-          id: event.event_id.toString(),
-          name: event.name,
-          type: 'event',
-          data: { scheduled: event.scheduled, status: event.status },
-          children: [],
-        };
-
-        // Limit to first 5 markets per event
-        const limitedMarkets = markets.slice(0, 5);
-
-        for (const market of limitedMarkets) {
-          console.log(`Processing market: ${market.name}`);
+      for (const tournament of limitedTournaments) {
+        try {
+          console.log(`Fetching events for tournament: ${tournament.name}`);
           
-          const marketNode: TreeNode = {
-            id: market.id.toString(),
-            name: market.name,
-            type: 'market',
-            data: { status: market.status },
+          // Add small delay to avoid rate limiting
+          await new Promise(resolve => setTimeout(resolve, 100));
+          
+          const events = await this.getEvents(tournament.id);
+          
+          // Handle case where events might be null or undefined
+          if (!events || !Array.isArray(events)) {
+            console.log(`No events found for tournament: ${tournament.name}`);
+            continue;
+          }
+          
+          // Limit to first 3 events per tournament
+          const limitedEvents = events.slice(0, 3);
+          
+          const tournamentNode: TreeNode = {
+            id: tournament.id.toString(),
+            name: tournament.name,
+            type: 'tournament',
             children: [],
           };
 
-          // Process selections from the market
-          for (const selectionGroup of market.selections) {
-            for (const selection of selectionGroup) {
-              const selectionNode: TreeNode = {
-                id: selection.line_id,
-                name: selection.name,
-                type: 'selection',
-                data: {
-                  odds: selection.odds,
-                  stake: selection.stake,
-                  line: selection.line,
-                },
+          for (const event of limitedEvents) {
+            try {
+              console.log(`Fetching markets for event: ${event.name}`);
+              
+              // Add small delay to avoid rate limiting
+              await new Promise(resolve => setTimeout(resolve, 100));
+              
+              const markets = await this.getMarkets(event.event_id);
+              
+              const eventNode: TreeNode = {
+                id: event.event_id.toString(),
+                name: event.name,
+                type: 'event',
+                data: { scheduled: event.scheduled, status: event.status },
+                children: [],
               };
-              marketNode.children!.push(selectionNode);
+
+              // Handle case where markets might be null or undefined
+              if (!markets || !Array.isArray(markets)) {
+                console.log(`No markets found for event: ${event.name}`);
+                // Still add the event node even without markets
+                tournamentNode.children!.push(eventNode);
+                continue;
+              }
+
+              // Limit to first 5 markets per event
+              const limitedMarkets = markets.slice(0, 5);
+
+        for (const market of limitedMarkets) {
+          try {
+            console.log(`Processing market: ${market.name}`);
+            
+            const marketNode: TreeNode = {
+              id: market.id.toString(),
+              name: market.name,
+              type: 'market',
+              data: { status: market.status },
+              children: [],
+            };
+
+            // Process selections from the market with null safety
+            if (market.selections && Array.isArray(market.selections)) {
+              for (const selectionGroup of market.selections) {
+                if (selectionGroup && Array.isArray(selectionGroup)) {
+                  for (const selection of selectionGroup) {
+                    if (selection && selection.line_id && selection.name) {
+                      const selectionNode: TreeNode = {
+                        id: selection.line_id,
+                        name: selection.name,
+                        type: 'selection',
+                        data: {
+                          odds: selection.odds || 0,
+                          stake: selection.stake || 0,
+                          line: selection.line || 0,
+                        },
+                      };
+                      marketNode.children!.push(selectionNode);
+                    }
+                  }
+                }
+              }
+            } else {
+              console.log(`Market ${market.name} has no selections or selections is null`);
+            }
+
+            // Add market even if it has no selections for visibility
+            eventNode.children!.push(marketNode);
+          } catch (error) {
+            console.error(`Error processing market ${market.name}:`, error);
+            // Continue with next market
+          }
+        }
+
+              if (eventNode.children!.length > 0) {
+                tournamentNode.children!.push(eventNode);
+              }
+            } catch (error) {
+              console.error(`Error processing event ${event.name}:`, error);
+              // Continue with next event
             }
           }
 
-          if (marketNode.children!.length > 0) {
-            eventNode.children!.push(marketNode);
+          if (tournamentNode.children!.length > 0) {
+            treeNodes.push(tournamentNode);
           }
-        }
-
-        if (eventNode.children!.length > 0) {
-          tournamentNode.children!.push(eventNode);
+        } catch (error) {
+          console.error(`Error processing tournament ${tournament.name}:`, error);
+          // Continue with next tournament
         }
       }
 
-      if (tournamentNode.children!.length > 0) {
-        treeNodes.push(tournamentNode);
-      }
+      return treeNodes;
+    } catch (error) {
+      console.error('Error building hierarchy:', error);
+      return [];
     }
-
-    return treeNodes;
   }
 }
 
