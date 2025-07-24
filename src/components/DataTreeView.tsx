@@ -27,6 +27,8 @@ const TreeItem = ({ node, level }: TreeItemProps) => {
         return <Activity className="h-4 w-4 text-primary" />;
       case 'event':
         return <Clock className="h-4 w-4 text-blue-600" />;
+      case 'category':
+        return <DollarSign className="h-4 w-4 text-green-600" />;
       case 'market':
         return <TrendingUp className="h-4 w-4 text-purple-600" />;
       case 'selection':

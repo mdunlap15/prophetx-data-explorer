@@ -33,6 +33,9 @@ export interface MMMarket {
   name: string;
   type: string;
   status: string;
+  category_name?: string;
+  sub_type?: string;
+  player_id?: number;
   selections: Array<Array<{
     line_id: string;
     name: string;
@@ -45,7 +48,7 @@ export interface MMMarket {
 export interface TreeNode {
   id: string;
   name: string;
-  type: 'tournament' | 'event' | 'market' | 'selection';
+  type: 'tournament' | 'event' | 'category' | 'market' | 'selection';
   children?: TreeNode[];
   data?: {
     scheduled?: string;
@@ -156,7 +159,7 @@ class ProphetXAPI {
 
   async getMarkets(eventId: number): Promise<MMMarket[]> {
     try {
-      const response = await this.makeRequest<{ data: { markets: MMMarket[] | null } }>(`/mm/get_markets?event_id=${eventId}`);
+      const response = await this.makeRequest<{ data: { markets: MMMarket[] | null } }>(`/v2/mm/get_markets?event_id=${eventId}`);
       
       // Handle null markets response
       if (!response.data.markets) {
@@ -173,14 +176,11 @@ class ProphetXAPI {
 
   async buildHierarchy(): Promise<TreeNode[]> {
     try {
-      console.log('Fetching tournaments with active events...');
+      console.log('Fetching all tournaments with active events...');
       const tournaments = await this.getTournaments();
       const treeNodes: TreeNode[] = [];
 
-      // Limit to first 3 tournaments for demo
-      const limitedTournaments = tournaments.slice(0, 3);
-
-      for (const tournament of limitedTournaments) {
+      for (const tournament of tournaments) {
         try {
           console.log(`Fetching events for tournament: ${tournament.name}`);
           
@@ -195,9 +195,6 @@ class ProphetXAPI {
             continue;
           }
           
-          // Limit to first 3 events per tournament
-          const limitedEvents = events.slice(0, 3);
-          
           const tournamentNode: TreeNode = {
             id: tournament.id.toString(),
             name: tournament.name,
@@ -205,7 +202,7 @@ class ProphetXAPI {
             children: [],
           };
 
-          for (const event of limitedEvents) {
+          for (const event of events) {
             try {
               console.log(`Fetching markets for event: ${event.name}`);
               
@@ -230,53 +227,82 @@ class ProphetXAPI {
                 continue;
               }
 
-              // Limit to first 5 markets per event
-              const limitedMarkets = markets.slice(0, 5);
+              // Group markets by category_name
+              const categorizedMarkets = new Map<string, MMMarket[]>();
+              
+              for (const market of markets) {
+                const categoryName = market.category_name || 'Other';
+                if (!categorizedMarkets.has(categoryName)) {
+                  categorizedMarkets.set(categoryName, []);
+                }
+                categorizedMarkets.get(categoryName)!.push(market);
+              }
 
-        for (const market of limitedMarkets) {
-          try {
-            console.log(`Processing market: ${market.name}`);
-            
-            const marketNode: TreeNode = {
-              id: market.id.toString(),
-              name: market.name,
-              type: 'market',
-              data: { status: market.status },
-              children: [],
-            };
+              // Create category nodes
+              for (const [categoryName, categoryMarkets] of categorizedMarkets) {
+                try {
+                  const categoryNode: TreeNode = {
+                    id: `${event.event_id}-${categoryName}`,
+                    name: categoryName,
+                    type: 'category',
+                    children: [],
+                  };
 
-            // Process selections from the market with null safety
-            if (market.selections && Array.isArray(market.selections)) {
-              for (const selectionGroup of market.selections) {
-                if (selectionGroup && Array.isArray(selectionGroup)) {
-                  for (const selection of selectionGroup) {
-                    if (selection && selection.line_id && selection.name) {
-                      const selectionNode: TreeNode = {
-                        id: selection.line_id,
-                        name: selection.name,
-                        type: 'selection',
-                        data: {
-                          odds: selection.odds || 0,
-                          stake: selection.stake || 0,
-                          line: selection.line || 0,
-                        },
+                  // Process all markets in this category
+                  for (const market of categoryMarkets) {
+                    try {
+                      console.log(`Processing market: ${market.name} in category: ${categoryName}`);
+                      
+                      const marketNode: TreeNode = {
+                        id: market.id.toString(),
+                        name: market.name,
+                        type: 'market',
+                        data: { status: market.status },
+                        children: [],
                       };
-                      marketNode.children!.push(selectionNode);
+
+                      // Process selections from the market with null safety
+                      if (market.selections && Array.isArray(market.selections)) {
+                        for (const selectionGroup of market.selections) {
+                          if (selectionGroup && Array.isArray(selectionGroup)) {
+                            for (const selection of selectionGroup) {
+                              if (selection && selection.line_id && selection.name) {
+                                const selectionNode: TreeNode = {
+                                  id: selection.line_id,
+                                  name: selection.name,
+                                  type: 'selection',
+                                  data: {
+                                    odds: selection.odds || 0,
+                                    stake: selection.stake || 0,
+                                    line: selection.line || 0,
+                                  },
+                                };
+                                marketNode.children!.push(selectionNode);
+                              }
+                            }
+                          }
+                        }
+                      } else {
+                        console.log(`Market ${market.name} has no selections or selections is null`);
+                      }
+
+                      // Add market even if it has no selections for visibility
+                      categoryNode.children!.push(marketNode);
+                    } catch (error) {
+                      console.error(`Error processing market ${market.name}:`, error);
+                      // Continue with next market
                     }
                   }
+
+                  // Add category if it has markets
+                  if (categoryNode.children!.length > 0) {
+                    eventNode.children!.push(categoryNode);
+                  }
+                } catch (error) {
+                  console.error(`Error processing category ${categoryName}:`, error);
+                  // Continue with next category
                 }
               }
-            } else {
-              console.log(`Market ${market.name} has no selections or selections is null`);
-            }
-
-            // Add market even if it has no selections for visibility
-            eventNode.children!.push(marketNode);
-          } catch (error) {
-            console.error(`Error processing market ${market.name}:`, error);
-            // Continue with next market
-          }
-        }
 
               if (eventNode.children!.length > 0) {
                 tournamentNode.children!.push(eventNode);
