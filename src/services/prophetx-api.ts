@@ -52,26 +52,49 @@ class ProphetXAPI {
   private rateLimitRemaining: number = 100;
 
   async authenticate(accessKey: string, secretKey: string): Promise<string> {
-    const response = await fetch(EDGE_FUNCTION_URL, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
+    // Try different common authentication endpoints
+    const endpoints = ['/v1/auth/token', '/v1/token', '/oauth/token', '/api/v1/token'];
+    
+    for (const endpoint of endpoints) {
+      console.log(`Trying authentication endpoint: ${endpoint}`);
+      
+      const response = await fetch(EDGE_FUNCTION_URL, {
         method: 'POST',
-        endpoint: '/v1/token',
-        body: { accessKey, secretKey }
-      }),
-    });
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          method: 'POST',
+          endpoint,
+          body: { accessKey, secretKey }
+        }),
+      });
 
-    if (!response.ok) {
-      throw new Error(`Authentication failed: ${response.statusText}`);
+      if (!response.ok) {
+        console.log(`Endpoint ${endpoint} failed with status: ${response.status}`);
+        continue;
+      }
+
+      const data = await response.json();
+      
+      // Check if the response contains an error (from our edge function)
+      if (data.error) {
+        console.log(`Endpoint ${endpoint} returned error: ${data.error}`);
+        continue;
+      }
+      
+      // Check if we got a valid token response
+      if (data.accessToken) {
+        console.log(`Authentication successful with endpoint: ${endpoint}`);
+        this.accessToken = data.accessToken;
+        this.updateRateLimit(response);
+        return data.accessToken;
+      }
+      
+      console.log(`Endpoint ${endpoint} didn't return accessToken:`, data);
     }
-
-    const data: AuthResponse = await response.json();
-    this.accessToken = data.accessToken;
-    this.updateRateLimit(response);
-    return data.accessToken;
+    
+    throw new Error('Authentication failed: Unable to authenticate with any known endpoint. Please check your credentials.');
   }
 
   private updateRateLimit(response: Response): void {
