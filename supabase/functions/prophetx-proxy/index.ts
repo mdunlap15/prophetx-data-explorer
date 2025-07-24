@@ -5,7 +5,7 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
 
-const BASE_URL = 'https://ss-sandbox.betprophet.co';
+const BASE_URL = 'https://api-ss-sandbox.betprophet.co';
 
 serve(async (req) => {
   // Handle CORS preflight requests
