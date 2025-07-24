@@ -23,14 +23,12 @@ const TreeItem = ({ node, level }: TreeItemProps) => {
 
   const getIcon = () => {
     switch (node.type) {
-      case 'sport':
+      case 'tournament':
         return <Activity className="h-4 w-4 text-primary" />;
       case 'event':
         return <Clock className="h-4 w-4 text-blue-600" />;
-      case 'category':
-        return <TrendingUp className="h-4 w-4 text-purple-600" />;
       case 'market':
-        return <DollarSign className="h-4 w-4 text-green-600" />;
+        return <TrendingUp className="h-4 w-4 text-purple-600" />;
       case 'selection':
         return <div className="h-4 w-4 rounded-full bg-orange-500" />;
       default:
@@ -58,31 +56,45 @@ const TreeItem = ({ node, level }: TreeItemProps) => {
         {getIcon()}
         <span className="font-medium">{node.name}</span>
         
-        {node.type === 'event' && node.data?.startTime && (
+        {node.type === 'event' && node.data?.scheduled && (
           <Badge variant="outline" className="ml-2 text-xs">
-            {formatStartTime(node.data.startTime)}
+            {formatStartTime(node.data.scheduled)}
           </Badge>
         )}
         
-        {node.type === 'market' && node.data?.state && (
+        {node.type === 'event' && node.data?.status && (
           <Badge 
-            variant={node.data.state === 'OPEN' ? 'default' : 'secondary'}
+            variant={node.data.status === 'open' ? 'default' : 'secondary'}
             className="ml-2 text-xs"
           >
-            {node.data.state}
+            {node.data.status}
+          </Badge>
+        )}
+        
+        {node.type === 'market' && node.data?.status && (
+          <Badge 
+            variant={node.data.status === 'active' ? 'default' : 'secondary'}
+            className="ml-2 text-xs"
+          >
+            {node.data.status}
           </Badge>
         )}
         
         {node.type === 'selection' && node.data && (
           <div className="flex items-center space-x-2 ml-auto">
-            {node.data.oddsDecimal && (
+            {node.data.odds && (
               <Badge variant="outline" className="text-xs">
-                {node.data.oddsDecimal.toFixed(2)}
+                {node.data.odds.toFixed(2)}
               </Badge>
             )}
-            {node.data.availableLiquidity !== undefined && (
+            {node.data.stake !== undefined && (
               <Badge variant="secondary" className="text-xs">
-                Liq: ${node.data.availableLiquidity}
+                Stake: {node.data.stake}
+              </Badge>
+            )}
+            {node.data.line !== undefined && (
+              <Badge variant="outline" className="text-xs">
+                Line: {node.data.line}
               </Badge>
             )}
           </div>

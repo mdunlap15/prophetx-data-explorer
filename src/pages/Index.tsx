@@ -84,30 +84,30 @@ const Index = () => {
               <h3 className="text-lg font-semibold mb-2">Data Summary</h3>
               <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
                 <div>
-                  <span className="font-medium">Sports:</span>{' '}
+                  <span className="font-medium">Tournaments:</span>{' '}
                   <span className="text-muted-foreground">{treeData.length}</span>
                 </div>
                 <div>
                   <span className="font-medium">Events:</span>{' '}
                   <span className="text-muted-foreground">
-                    {treeData.reduce((acc, sport) => acc + (sport.children?.length || 0), 0)}
-                  </span>
-                </div>
-                <div>
-                  <span className="font-medium">Categories:</span>{' '}
-                  <span className="text-muted-foreground">
-                    {treeData.reduce((acc, sport) => 
-                      acc + (sport.children?.reduce((eventAcc, event) => 
-                        eventAcc + (event.children?.length || 0), 0) || 0), 0)}
+                    {treeData.reduce((acc, tournament) => acc + (tournament.children?.length || 0), 0)}
                   </span>
                 </div>
                 <div>
                   <span className="font-medium">Markets:</span>{' '}
                   <span className="text-muted-foreground">
-                    {treeData.reduce((acc, sport) => 
-                      acc + (sport.children?.reduce((eventAcc, event) => 
-                        eventAcc + (event.children?.reduce((catAcc, category) => 
-                          catAcc + (category.children?.length || 0), 0) || 0), 0) || 0), 0)}
+                    {treeData.reduce((acc, tournament) => 
+                      acc + (tournament.children?.reduce((eventAcc, event) => 
+                        eventAcc + (event.children?.length || 0), 0) || 0), 0)}
+                  </span>
+                </div>
+                <div>
+                  <span className="font-medium">Selections:</span>{' '}
+                  <span className="text-muted-foreground">
+                    {treeData.reduce((acc, tournament) => 
+                      acc + (tournament.children?.reduce((eventAcc, event) => 
+                        eventAcc + (event.children?.reduce((marketAcc, market) => 
+                          marketAcc + (market.children?.length || 0), 0) || 0), 0) || 0), 0)}
                   </span>
                 </div>
               </div>

@@ -30,7 +30,7 @@ serve(async (req) => {
       headers['Authorization'] = `Bearer ${accessToken}`;
     }
 
-    const response = await fetch(`${BASE_URL}${endpoint}`, {
+    const response = await fetch(`${BASE_URL}/partner${endpoint}`, {
       method,
       headers,
       body: body ? JSON.stringify(body) : undefined,

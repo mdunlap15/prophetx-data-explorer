@@ -1,47 +1,58 @@
 export interface AuthResponse {
-  accessToken: string;
-  expiresIn: number;
+  data: {
+    access_token: string;
+    access_expire_time: number;
+    refresh_token: string;
+    refresh_expire_time: number;
+  };
 }
 
-export interface Sport {
-  id: string;
+export interface Tournament {
+  id: number;
   name: string;
+  sport: {
+    id: number;
+    name: string;
+  };
 }
 
-export interface Event {
-  eventId: string;
+export interface SportEvent {
+  event_id: number;
   name: string;
-  startTime: string;
+  scheduled: string;
+  status: string;
+  competitors: Array<{
+    id: number;
+    name: string;
+    side: string;
+  }>;
 }
 
-export interface MarketCategory {
-  code: string;
+export interface MMMarket {
+  id: number;
   name: string;
-}
-
-export interface Market {
-  marketId: string;
-  name: string;
-  state: string;
-}
-
-export interface Selection {
-  selectionId: string;
-  name: string;
-  oddsDecimal: number;
-  availableLiquidity: number;
+  type: string;
+  status: string;
+  selections: Array<Array<{
+    line_id: string;
+    name: string;
+    odds: number;
+    stake: number;
+    line: number;
+  }>>;
 }
 
 export interface TreeNode {
   id: string;
   name: string;
-  type: 'sport' | 'event' | 'category' | 'market' | 'selection';
+  type: 'tournament' | 'event' | 'market' | 'selection';
   children?: TreeNode[];
   data?: {
-    startTime?: string;
-    oddsDecimal?: number;
-    availableLiquidity?: number;
-    state?: string;
+    scheduled?: string;
+    odds?: number;
+    stake?: number;
+    status?: string;
+    line?: number;
   };
 }
 
@@ -52,49 +63,43 @@ class ProphetXAPI {
   private rateLimitRemaining: number = 100;
 
   async authenticate(accessKey: string, secretKey: string): Promise<string> {
-    // Try different common authentication endpoints
-    const endpoints = ['/v1/auth/token', '/v1/token', '/oauth/token', '/api/v1/token'];
+    console.log('Attempting authentication with ProphetX API...');
     
-    for (const endpoint of endpoints) {
-      console.log(`Trying authentication endpoint: ${endpoint}`);
-      
-      const response = await fetch(EDGE_FUNCTION_URL, {
+    const response = await fetch(EDGE_FUNCTION_URL, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          method: 'POST',
-          endpoint,
-          body: { accessKey, secretKey }
-        }),
-      });
+        endpoint: '/auth/login',
+        body: { 
+          access_key: accessKey, 
+          secret_key: secretKey 
+        }
+      }),
+    });
 
-      if (!response.ok) {
-        console.log(`Endpoint ${endpoint} failed with status: ${response.status}`);
-        continue;
-      }
+    if (!response.ok) {
+      throw new Error(`Authentication request failed: ${response.status} ${response.statusText}`);
+    }
 
-      const data = await response.json();
-      
-      // Check if the response contains an error (from our edge function)
-      if (data.error) {
-        console.log(`Endpoint ${endpoint} returned error: ${data.error}`);
-        continue;
-      }
-      
-      // Check if we got a valid token response
-      if (data.accessToken) {
-        console.log(`Authentication successful with endpoint: ${endpoint}`);
-        this.accessToken = data.accessToken;
-        this.updateRateLimit(response);
-        return data.accessToken;
-      }
-      
-      console.log(`Endpoint ${endpoint} didn't return accessToken:`, data);
+    const data: AuthResponse = await response.json();
+    
+    // Check if the response contains an error (from our edge function)
+    if ('error' in data) {
+      throw new Error(`Authentication failed: ${(data as any).error}`);
     }
     
-    throw new Error('Authentication failed: Unable to authenticate with any known endpoint. Please check your credentials.');
+    // Check if we got a valid token response
+    if (data.data?.access_token) {
+      console.log('Authentication successful');
+      this.accessToken = data.data.access_token;
+      this.updateRateLimit(response);
+      return data.data.access_token;
+    }
+    
+    throw new Error('Authentication failed: No access token received');
   }
 
   private updateRateLimit(response: Response): void {
@@ -139,109 +144,98 @@ class ProphetXAPI {
     return response.json();
   }
 
-  async getSports(): Promise<Sport[]> {
-    return this.makeRequest<Sport[]>('/v1/sports');
+  async getTournaments(): Promise<Tournament[]> {
+    const response = await this.makeRequest<{ data: { tournaments: Tournament[] } }>('/mm/get_tournaments?has_active_events=true');
+    return response.data.tournaments;
   }
 
-  async getEvents(sportId: string): Promise<Event[]> {
-    return this.makeRequest<Event[]>(`/v1/events?sportId=${sportId}&state=OPEN`);
+  async getEvents(tournamentId: number): Promise<SportEvent[]> {
+    const response = await this.makeRequest<{ data: { sport_events: SportEvent[] } }>(`/mm/get_sport_events?tournament_id=${tournamentId}`);
+    return response.data.sport_events;
   }
 
-  async getMarketCategories(eventId: string): Promise<MarketCategory[]> {
-    return this.makeRequest<MarketCategory[]>(`/v1/market-categories?eventId=${eventId}`);
-  }
-
-  async getMarkets(eventId: string, categoryCode: string): Promise<Market[]> {
-    return this.makeRequest<Market[]>(`/v1/markets?eventId=${eventId}&category=${categoryCode}`);
-  }
-
-  async getSelections(marketId: string): Promise<Selection[]> {
-    return this.makeRequest<Selection[]>(`/v1/selections?marketId=${marketId}`);
+  async getMarkets(eventId: number): Promise<MMMarket[]> {
+    const response = await this.makeRequest<{ data: { markets: MMMarket[] } }>(`/mm/get_markets?event_id=${eventId}`);
+    return response.data.markets;
   }
 
   async buildHierarchy(): Promise<TreeNode[]> {
-    const sports = await this.getSports();
+    console.log('Fetching tournaments with active events...');
+    const tournaments = await this.getTournaments();
     const treeNodes: TreeNode[] = [];
 
-    for (const sport of sports) {
-      console.log(`Fetching events for sport: ${sport.name}`);
-      const events = await this.getEvents(sport.id);
+    // Limit to first 3 tournaments for demo
+    const limitedTournaments = tournaments.slice(0, 3);
+
+    for (const tournament of limitedTournaments) {
+      console.log(`Fetching events for tournament: ${tournament.name}`);
+      const events = await this.getEvents(tournament.id);
       
-      // Limit to first 3 OPEN events per sport
+      // Limit to first 3 events per tournament
       const limitedEvents = events.slice(0, 3);
       
-      const sportNode: TreeNode = {
-        id: sport.id,
-        name: sport.name,
-        type: 'sport',
+      const tournamentNode: TreeNode = {
+        id: tournament.id.toString(),
+        name: tournament.name,
+        type: 'tournament',
         children: [],
       };
 
       for (const event of limitedEvents) {
-        console.log(`Fetching categories for event: ${event.name}`);
-        const categories = await this.getMarketCategories(event.eventId);
+        console.log(`Fetching markets for event: ${event.name}`);
+        const markets = await this.getMarkets(event.event_id);
         
         const eventNode: TreeNode = {
-          id: event.eventId,
+          id: event.event_id.toString(),
           name: event.name,
           type: 'event',
-          data: { startTime: event.startTime },
+          data: { scheduled: event.scheduled, status: event.status },
           children: [],
         };
 
-        for (const category of categories) {
-          console.log(`Fetching markets for category: ${category.name} in event: ${event.name}`);
-          const markets = await this.getMarkets(event.eventId, category.code);
+        // Limit to first 5 markets per event
+        const limitedMarkets = markets.slice(0, 5);
+
+        for (const market of limitedMarkets) {
+          console.log(`Processing market: ${market.name}`);
           
-          const categoryNode: TreeNode = {
-            id: `${event.eventId}-${category.code}`,
-            name: category.name,
-            type: 'category',
+          const marketNode: TreeNode = {
+            id: market.id.toString(),
+            name: market.name,
+            type: 'market',
+            data: { status: market.status },
             children: [],
           };
 
-          for (const market of markets) {
-            console.log(`Fetching selections for market: ${market.name}`);
-            const selections = await this.getSelections(market.marketId);
-            
-            const marketNode: TreeNode = {
-              id: market.marketId,
-              name: market.name,
-              type: 'market',
-              data: { state: market.state },
-              children: [],
-            };
-
-            for (const selection of selections) {
+          // Process selections from the market
+          for (const selectionGroup of market.selections) {
+            for (const selection of selectionGroup) {
               const selectionNode: TreeNode = {
-                id: selection.selectionId,
+                id: selection.line_id,
                 name: selection.name,
                 type: 'selection',
                 data: {
-                  oddsDecimal: selection.oddsDecimal,
-                  availableLiquidity: selection.availableLiquidity,
+                  odds: selection.odds,
+                  stake: selection.stake,
+                  line: selection.line,
                 },
               };
               marketNode.children!.push(selectionNode);
             }
-
-            if (marketNode.children!.length > 0) {
-              categoryNode.children!.push(marketNode);
-            }
           }
 
-          if (categoryNode.children!.length > 0) {
-            eventNode.children!.push(categoryNode);
+          if (marketNode.children!.length > 0) {
+            eventNode.children!.push(marketNode);
           }
         }
 
         if (eventNode.children!.length > 0) {
-          sportNode.children!.push(eventNode);
+          tournamentNode.children!.push(eventNode);
         }
       }
 
-      if (sportNode.children!.length > 0) {
-        treeNodes.push(sportNode);
+      if (tournamentNode.children!.length > 0) {
+        treeNodes.push(tournamentNode);
       }
     }
 
