@@ -176,13 +176,14 @@ class ProphetXAPI {
 
   async buildHierarchy(): Promise<TreeNode[]> {
     try {
-      console.log('Fetching all tournaments with active events...');
+      console.log('🚀 Starting buildHierarchy...');
       const tournaments = await this.getTournaments();
+      console.log(`✅ Fetched ${tournaments.length} tournaments`);
       const treeNodes: TreeNode[] = [];
 
       for (const tournament of tournaments) {
         try {
-          console.log(`Fetching events for tournament: ${tournament.name}`);
+          console.log(`📊 Processing tournament: ${tournament.name}`);
           
           // Add small delay to avoid rate limiting
           await new Promise(resolve => setTimeout(resolve, 100));
@@ -191,9 +192,11 @@ class ProphetXAPI {
           
           // Handle case where events might be null or undefined
           if (!events || !Array.isArray(events)) {
-            console.log(`No events found for tournament: ${tournament.name}`);
+            console.log(`❌ No events found for tournament: ${tournament.name}`);
             continue;
           }
+          
+          console.log(`✅ Found ${events.length} events for tournament: ${tournament.name}`);
           
           const tournamentNode: TreeNode = {
             id: tournament.id.toString(),
@@ -322,9 +325,16 @@ class ProphetXAPI {
         }
       }
 
+      console.log(`🎯 Final result: ${treeNodes.length} tournaments with data`);
+      console.log('Tree structure:', treeNodes.map(t => ({ 
+        name: t.name, 
+        events: t.children?.length || 0,
+        totalCategories: t.children?.reduce((sum, event) => sum + (event.children?.length || 0), 0) || 0
+      })));
+      
       return treeNodes;
     } catch (error) {
-      console.error('Error building hierarchy:', error);
+      console.error('💥 Error building hierarchy:', error);
       return [];
     }
   }

@@ -30,19 +30,28 @@ const Index = () => {
   };
 
   const handleLoadData = async () => {
+    console.log('🔄 Starting data load...');
     setIsDataLoading(true);
     setTreeData([]);
     
     try {
       const data = await prophetXAPI.buildHierarchy();
+      console.log('📦 Received data in Index.tsx:', data.length, 'tournaments');
+      console.log('Data structure:', data);
       setTreeData(data);
-      toast.success(`Loaded ${data.length} sports with market data`);
+      
+      if (data.length > 0) {
+        toast.success(`✅ Loaded ${data.length} tournaments with market data`);
+      } else {
+        toast.warning('⚠️ No tournament data was loaded');
+      }
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Failed to load data';
-      toast.error(errorMessage);
-      console.error('Data loading error:', error);
+      toast.error(`❌ ${errorMessage}`);
+      console.error('💥 Data loading error:', error);
     } finally {
       setIsDataLoading(false);
+      console.log('✅ Data loading completed');
     }
   };
 
