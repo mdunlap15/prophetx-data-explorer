@@ -187,70 +187,79 @@ class ProphetXAPI {
    * Handles: array of arrays, flat arrays, and dictionary formats
    */
   private normalizeSelections(market: MMMarket): NormalizedSelectionGroup[] {
-    if (!market.selections || !Array.isArray(market.selections) || market.selections.length === 0) {
-      return [];
-    }
-
+    const s = market.selections;
     const groups: NormalizedSelectionGroup[] = [];
-    
+    if (!s) return groups;
+
+    // Add diagnostic logging before normalization
+    console.log(
+      'SELECTIONS SHAPE:',
+      market.name,
+      Array.isArray(s)
+        ? (Array.isArray(s[0]) ? 'arrayOfArrays' : 'flatArray')
+        : (s && typeof s === 'object' ? 'dict' : typeof s),
+      !Array.isArray(s) && s ? Object.keys(s).slice(0,5) : undefined
+    );
+
     try {
-      // Case 1: Array of arrays (Selection[][])
-      if (Array.isArray(market.selections[0])) {
-        for (let i = 0; i < market.selections.length; i++) {
-          const selectionGroup = market.selections[i];
-          if (Array.isArray(selectionGroup) && selectionGroup.length > 0) {
-            // Try to derive line from selections
-            const lineValue = selectionGroup[0]?.line !== undefined ? selectionGroup[0].line : i;
-            groups.push({
-              line: lineValue,
-              selections: selectionGroup
-            });
-          }
-        }
-      } 
-      // Case 2: Flat array or object-like structure
-      else {
-        // Check if it's a dictionary keyed by line
-        const firstItem = market.selections[0];
-        if (firstItem && typeof firstItem === 'object' && !('line_id' in firstItem) && !('name' in firstItem) && !('display_name' in firstItem)) {
-          // Treat as dictionary format Record<string, Selection[]>
-          const selectionDict = market.selections[0] as any;
-          for (const [lineKey, lineSelections] of Object.entries(selectionDict)) {
-            if (Array.isArray(lineSelections)) {
-              groups.push({
-                line: lineKey,
-                selections: lineSelections as any[]
-              });
+      // Case A: selections is an ARRAY
+      if (Array.isArray(s)) {
+        // A1: array of arrays (each inner array corresponds to one line group)
+        if (s.length > 0 && Array.isArray(s[0])) {
+          (s as any[][]).forEach((group) => {
+            if (Array.isArray(group) && group.length > 0) {
+              // derive a real line if present (do NOT fall back to index)
+              const ln =
+                group[0]?.line ??
+                group.find((x: any) => x && x.line != null)?.line ??
+                undefined;
+              groups.push({ line: ln, selections: group as any[] });
             }
-          }
-        } else {
-          // Treat as flat array, group by line value
-          const selectionsByLine = new Map<string | number, any[]>();
-          
-          for (const selection of market.selections) {
-            if (selection && typeof selection === 'object') {
-              const lineKey = (selection as any).line !== undefined && (selection as any).line !== null ? (selection as any).line : 'default';
-              if (!selectionsByLine.has(lineKey)) {
-                selectionsByLine.set(lineKey, []);
-              }
-              selectionsByLine.get(lineKey)!.push(selection);
-            }
-          }
-          
-          for (const [lineKey, selections] of selectionsByLine) {
-            groups.push({
-              line: lineKey === 'default' ? undefined : lineKey,
-              selections
-            });
-          }
+          });
+          console.log('GROUPS:', market.name, groups.map(g => ({ line: g.line, count: g.selections.length })));
+          return groups;
         }
+
+        // A2: flat array (one group, possibly without a line)
+        const byLine = new Map<string, any[]>();
+        (s as any[]).forEach((sel) => {
+          if (sel && typeof sel === 'object') {
+            const ln = sel.line ?? '__default__';
+            const key = String(ln);
+            if (!byLine.has(key)) byLine.set(key, []);
+            byLine.get(key)!.push(sel);
+          }
+        });
+        for (const [key, arr] of byLine) {
+          groups.push({
+            line: key === '__default__' ? undefined : (isNaN(Number(key)) ? key : Number(key)),
+            selections: arr,
+          });
+        }
+        console.log('GROUPS:', market.name, groups.map(g => ({ line: g.line, count: g.selections.length })));
+        return groups;
       }
-      
-      console.log(`🔧 Normalized ${market.name}: ${groups.length} groups`, groups.map(g => ({ line: g.line, count: g.selections.length })));
+
+      // Case B: selections is an OBJECT (dictionary keyed by line)
+      if (typeof s === 'object') {
+        const dict = s as Record<string, any[]>;
+        for (const [k, arr] of Object.entries(dict)) {
+          if (Array.isArray(arr)) {
+            const maybeNum = Number(k);
+            groups.push({
+              line: Number.isNaN(maybeNum) ? k : maybeNum,
+              selections: arr,
+            });
+          }
+        }
+        console.log('GROUPS:', market.name, groups.map(g => ({ line: g.line, count: g.selections.length })));
+        return groups;
+      }
+
+      console.log('GROUPS:', market.name, groups.map(g => ({ line: g.line, count: g.selections.length })));
       return groups;
-      
-    } catch (error) {
-      console.error(`❌ Error normalizing selections for market ${market.name}:`, error);
+    } catch (err) {
+      console.error(`❌ Error normalizing selections for market ${market.name}:`, err);
       return [];
     }
   }
@@ -383,7 +392,7 @@ class ProphetXAPI {
                       
                       if (normalizedGroups.length > 0) {
                         // For multi-line markets (spreads/totals), create line nodes
-                        if (normalizedGroups.length > 1 || (normalizedGroups[0].line !== undefined && normalizedGroups[0].line !== null)) {
+                        if (normalizedGroups.length > 1 || (normalizedGroups.length === 1 && normalizedGroups[0].line != null && /Run Line|Total|Spread|Handicap|Over|Under/i.test(market.name))) {
                           for (const group of normalizedGroups) {
                             const lineNode: TreeNode = {
                               id: `${market.id}-line-${group.line || 'default'}`,
