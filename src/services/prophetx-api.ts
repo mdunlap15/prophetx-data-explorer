@@ -36,15 +36,7 @@ export interface MMMarket {
   category_name?: string;
   sub_type?: string;
   player_id?: number;
-  selections: Array<Array<{
-    line_id?: string;
-    name?: string;
-    display_name?: string;
-    odds?: number | null;
-    stake?: number | null;
-    line?: number | null;
-    display_odds?: string | null;
-  }>>;
+  selections: any; // More flexible to handle different selection shapes
 }
 
 export interface TreeNode {
@@ -60,6 +52,19 @@ export interface TreeNode {
     line?: number | null;
     display_odds?: string | null;
   };
+}
+
+interface NormalizedSelectionGroup {
+  line?: number | string;
+  selections: Array<{
+    line_id?: string;
+    name?: string;
+    display_name?: string;
+    odds?: number | null;
+    stake?: number | null;
+    line?: number | null;
+    display_odds?: string | null;
+  }>;
 }
 
 const EDGE_FUNCTION_URL = 'https://wdknwmgqggtcayrdjvuu.supabase.co/functions/v1/prophetx-proxy';
@@ -177,6 +182,79 @@ class ProphetXAPI {
     }
   }
 
+  /**
+   * Normalizes market selections from various shapes into grouped format
+   * Handles: array of arrays, flat arrays, and dictionary formats
+   */
+  private normalizeSelections(market: MMMarket): NormalizedSelectionGroup[] {
+    if (!market.selections || !Array.isArray(market.selections) || market.selections.length === 0) {
+      return [];
+    }
+
+    const groups: NormalizedSelectionGroup[] = [];
+    
+    try {
+      // Case 1: Array of arrays (Selection[][])
+      if (Array.isArray(market.selections[0])) {
+        for (let i = 0; i < market.selections.length; i++) {
+          const selectionGroup = market.selections[i];
+          if (Array.isArray(selectionGroup) && selectionGroup.length > 0) {
+            // Try to derive line from selections
+            const lineValue = selectionGroup[0]?.line !== undefined ? selectionGroup[0].line : i;
+            groups.push({
+              line: lineValue,
+              selections: selectionGroup
+            });
+          }
+        }
+      } 
+      // Case 2: Flat array or object-like structure
+      else {
+        // Check if it's a dictionary keyed by line
+        const firstItem = market.selections[0];
+        if (firstItem && typeof firstItem === 'object' && !('line_id' in firstItem) && !('name' in firstItem) && !('display_name' in firstItem)) {
+          // Treat as dictionary format Record<string, Selection[]>
+          const selectionDict = market.selections[0] as any;
+          for (const [lineKey, lineSelections] of Object.entries(selectionDict)) {
+            if (Array.isArray(lineSelections)) {
+              groups.push({
+                line: lineKey,
+                selections: lineSelections as any[]
+              });
+            }
+          }
+        } else {
+          // Treat as flat array, group by line value
+          const selectionsByLine = new Map<string | number, any[]>();
+          
+          for (const selection of market.selections) {
+            if (selection && typeof selection === 'object') {
+              const lineKey = (selection as any).line !== undefined && (selection as any).line !== null ? (selection as any).line : 'default';
+              if (!selectionsByLine.has(lineKey)) {
+                selectionsByLine.set(lineKey, []);
+              }
+              selectionsByLine.get(lineKey)!.push(selection);
+            }
+          }
+          
+          for (const [lineKey, selections] of selectionsByLine) {
+            groups.push({
+              line: lineKey === 'default' ? undefined : lineKey,
+              selections
+            });
+          }
+        }
+      }
+      
+      console.log(`🔧 Normalized ${market.name}: ${groups.length} groups`, groups.map(g => ({ line: g.line, count: g.selections.length })));
+      return groups;
+      
+    } catch (error) {
+      console.error(`❌ Error normalizing selections for market ${market.name}:`, error);
+      return [];
+    }
+  }
+
   async buildHierarchy(): Promise<TreeNode[]> {
     try {
       console.log('🚀 Starting buildHierarchy...');
@@ -267,19 +345,55 @@ class ProphetXAPI {
                         children: [],
                       };
 
-                      // Process selections from the market with null safety
-                      if (market.selections && Array.isArray(market.selections)) {
-                        console.log(`📊 Processing selections for market: ${market.name}`, market.selections);
+                      // Diagnose selections shape for spread/total markets
+                      if (/Run Line|Total/i.test(market.name)) {
+                        console.log(`🔍 DIAGNOSING MARKET: ${market.name}`);
+                        console.log(`Raw market JSON (first 2k chars):`, JSON.stringify(market, null, 2).substring(0, 2000));
                         
-                        for (const selectionGroup of market.selections) {
-                          if (selectionGroup && Array.isArray(selectionGroup)) {
-                            console.log(`🔍 Selection group:`, selectionGroup);
+                        const hasSelections = !!(market.selections && Array.isArray(market.selections) && market.selections.length > 0);
+                        let selectionShape = 'none';
+                        let lineExamples: any[] = [];
+                        
+                        if (hasSelections) {
+                          // Detect selection shape
+                          const firstGroup = market.selections[0];
+                          if (Array.isArray(firstGroup)) {
+                            selectionShape = 'arrayOfArrays';
+                            lineExamples = market.selections.map((group: any[], idx: number) => ({
+                              groupIndex: idx,
+                              count: group.length,
+                              sample: group[0]
+                            }));
+                          } else if (typeof firstGroup === 'object' && firstGroup !== null) {
+                            if ('line' in firstGroup || 'line_id' in firstGroup) {
+                              selectionShape = 'flatArray';
+                              lineExamples = market.selections.slice(0, 3);
+                            } else {
+                              selectionShape = 'lineDict';
+                              lineExamples = Object.keys(market.selections).slice(0, 3);
+                            }
+                          }
+                        }
+                        
+                        console.log(`📊 MARKET SUMMARY: { marketName: "${market.name}", hasSelections: ${hasSelections}, selectionShape: "${selectionShape}", lineExamples:`, lineExamples, '}');
+                      }
+
+                      // Process selections using robust normalization
+                      const normalizedGroups = this.normalizeSelections(market);
+                      
+                      if (normalizedGroups.length > 0) {
+                        // For multi-line markets (spreads/totals), create line nodes
+                        if (normalizedGroups.length > 1 || (normalizedGroups[0].line !== undefined && normalizedGroups[0].line !== null)) {
+                          for (const group of normalizedGroups) {
+                            const lineNode: TreeNode = {
+                              id: `${market.id}-line-${group.line || 'default'}`,
+                              name: group.line !== undefined && group.line !== null ? `Line ${group.line}` : 'Default Line',
+                              type: 'category',
+                              children: [],
+                            };
                             
-                            for (const selection of selectionGroup) {
-                              // More lenient validation - accept selections that have basic identifying info
+                            for (const selection of group.selections) {
                               if (selection && (selection.line_id || selection.name || selection.display_name)) {
-                                console.log(`✅ Processing selection:`, selection);
-                                
                                 const selectionNode: TreeNode = {
                                   id: selection.line_id || `${market.id}-${selection.name || 'unknown'}`,
                                   name: selection.display_name || selection.name || 'Unknown Selection',
@@ -291,15 +405,35 @@ class ProphetXAPI {
                                     display_odds: selection.display_odds || null,
                                   },
                                 };
-                                marketNode.children!.push(selectionNode);
-                              } else {
-                                console.log(`❌ Skipping invalid selection:`, selection);
+                                lineNode.children!.push(selectionNode);
                               }
+                            }
+                            
+                            if (lineNode.children!.length > 0) {
+                              marketNode.children!.push(lineNode);
+                            }
+                          }
+                        } else {
+                          // For single-line markets (Moneyline), attach selections directly
+                          for (const selection of normalizedGroups[0].selections) {
+                            if (selection && (selection.line_id || selection.name || selection.display_name)) {
+                              const selectionNode: TreeNode = {
+                                id: selection.line_id || `${market.id}-${selection.name || 'unknown'}`,
+                                name: selection.display_name || selection.name || 'Unknown Selection',
+                                type: 'selection',
+                                data: {
+                                  odds: selection.odds !== null && selection.odds !== undefined ? selection.odds : null,
+                                  stake: selection.stake !== null && selection.stake !== undefined ? selection.stake : null,
+                                  line: selection.line !== null && selection.line !== undefined ? selection.line : null,
+                                  display_odds: selection.display_odds || null,
+                                },
+                              };
+                              marketNode.children!.push(selectionNode);
                             }
                           }
                         }
                       } else {
-                        console.log(`❌ Market ${market.name} has no selections or selections is null`);
+                        console.log(`❌ Market ${market.name} has no normalized selections`);
                       }
 
                       // Add market even if it has no selections for visibility
