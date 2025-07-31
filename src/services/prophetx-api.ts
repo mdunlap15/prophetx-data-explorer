@@ -37,11 +37,13 @@ export interface MMMarket {
   sub_type?: string;
   player_id?: number;
   selections: Array<Array<{
-    line_id: string;
-    name: string;
-    odds: number;
-    stake: number;
-    line: number;
+    line_id?: string;
+    name?: string;
+    display_name?: string;
+    odds?: number | null;
+    stake?: number | null;
+    line?: number | null;
+    display_odds?: string | null;
   }>>;
 }
 
@@ -52,10 +54,11 @@ export interface TreeNode {
   children?: TreeNode[];
   data?: {
     scheduled?: string;
-    odds?: number;
-    stake?: number;
+    odds?: number | null;
+    stake?: number | null;
     status?: string;
-    line?: number;
+    line?: number | null;
+    display_odds?: string | null;
   };
 }
 
@@ -266,27 +269,37 @@ class ProphetXAPI {
 
                       // Process selections from the market with null safety
                       if (market.selections && Array.isArray(market.selections)) {
+                        console.log(`📊 Processing selections for market: ${market.name}`, market.selections);
+                        
                         for (const selectionGroup of market.selections) {
                           if (selectionGroup && Array.isArray(selectionGroup)) {
+                            console.log(`🔍 Selection group:`, selectionGroup);
+                            
                             for (const selection of selectionGroup) {
-                              if (selection && selection.line_id && selection.name) {
+                              // More lenient validation - accept selections that have basic identifying info
+                              if (selection && (selection.line_id || selection.name || selection.display_name)) {
+                                console.log(`✅ Processing selection:`, selection);
+                                
                                 const selectionNode: TreeNode = {
-                                  id: selection.line_id,
-                                  name: selection.name,
+                                  id: selection.line_id || `${market.id}-${selection.name || 'unknown'}`,
+                                  name: selection.display_name || selection.name || 'Unknown Selection',
                                   type: 'selection',
                                   data: {
-                                    odds: selection.odds || 0,
-                                    stake: selection.stake || 0,
-                                    line: selection.line || 0,
+                                    odds: selection.odds !== null && selection.odds !== undefined ? selection.odds : null,
+                                    stake: selection.stake !== null && selection.stake !== undefined ? selection.stake : null,
+                                    line: selection.line !== null && selection.line !== undefined ? selection.line : null,
+                                    display_odds: selection.display_odds || null,
                                   },
                                 };
                                 marketNode.children!.push(selectionNode);
+                              } else {
+                                console.log(`❌ Skipping invalid selection:`, selection);
                               }
                             }
                           }
                         }
                       } else {
-                        console.log(`Market ${market.name} has no selections or selections is null`);
+                        console.log(`❌ Market ${market.name} has no selections or selections is null`);
                       }
 
                       // Add market even if it has no selections for visibility

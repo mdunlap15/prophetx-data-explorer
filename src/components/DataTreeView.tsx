@@ -84,17 +84,17 @@ const TreeItem = ({ node, level }: TreeItemProps) => {
         
         {node.type === 'selection' && node.data && (
           <div className="flex items-center space-x-2 ml-auto">
-            {node.data.odds && (
+            {(node.data.display_odds || node.data.odds !== null) && (
               <Badge variant="outline" className="text-xs">
-                {node.data.odds.toFixed(2)}
+                {node.data.display_odds || (node.data.odds ? node.data.odds.toFixed(2) : 'N/A')}
               </Badge>
             )}
-            {node.data.stake !== undefined && (
+            {node.data.stake !== null && node.data.stake !== undefined && (
               <Badge variant="secondary" className="text-xs">
                 Stake: {node.data.stake}
               </Badge>
             )}
-            {node.data.line !== undefined && (
+            {node.data.line !== null && node.data.line !== undefined && (
               <Badge variant="outline" className="text-xs">
                 Line: {node.data.line}
               </Badge>
