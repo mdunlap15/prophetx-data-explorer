@@ -67,6 +67,8 @@ interface NormalizedSelectionGroup {
   }>;
 }
 
+const LINE_MARKET_RE = /Run Line|Totals?|Total Runs|Spread|Handicap|Over|Under|Puck Line/i;
+
 const EDGE_FUNCTION_URL = 'https://wdknwmgqggtcayrdjvuu.supabase.co/functions/v1/prophetx-proxy';
 
 class ProphetXAPI {
@@ -184,7 +186,8 @@ class ProphetXAPI {
 
   /**
    * Normalizes market selections from various shapes into grouped format
-   * Handles: array of arrays, flat arrays, and dictionary formats
+   * Handles: dictionary (Record<line, Selection[]>), array of arrays, and flat arrays.
+   * Never uses array index as a fallback line.
    */
   private normalizeSelections(market: MMMarket): NormalizedSelectionGroup[] {
     const s = market.selections;
@@ -192,7 +195,7 @@ class ProphetXAPI {
     if (!s) return groups;
 
     try {
-      // Case A: DICTIONARY FIRST (Record<line, Selection[]>)
+      // A) DICTIONARY FIRST: Record<line, Selection[]>
       if (typeof s === 'object' && !Array.isArray(s)) {
         for (const [k, arr] of Object.entries(s as Record<string, any[]>)) {
           if (Array.isArray(arr)) {
@@ -203,19 +206,18 @@ class ProphetXAPI {
         return groups;
       }
 
-      // Case B: ARRAY OF ARRAYS (Selection[][])
+      // B) ARRAY OF ARRAYS: Selection[][]
       if (Array.isArray(s) && s.length && Array.isArray((s as any)[0])) {
         (s as any[][]).forEach(group => {
           if (Array.isArray(group) && group.length) {
-            // derive real line if present; NEVER use array index
-            const ln = group.find(x => x && x.line != null)?.line ?? undefined;
+            const ln = group.find(x => x && x.line != null)?.line ?? undefined; // no index fallback
             groups.push({ line: ln, selections: group as any[] });
           }
         });
         return groups;
       }
 
-      // Case C: FLAT ARRAY (Selection[])
+      // C) FLAT ARRAY: Selection[]
       if (Array.isArray(s)) {
         const byLine = new Map<string, any[]>();
         (s as any[]).forEach(sel => {
@@ -233,11 +235,30 @@ class ProphetXAPI {
           });
         }
       }
+
       return groups;
     } catch (e) {
       console.error(`normalizeSelections error for ${market.name}`, e);
       return [];
     }
+  }
+
+  // Treat undefined and 0 as the same "default" for non-line markets (e.g., Moneyline).
+  private normalizeLineKeyForMarket(marketName: string, line: unknown): string {
+    const isLineMarket = LINE_MARKET_RE.test(marketName);
+    if (!isLineMarket) return '__default__';
+    if (line === null || line === undefined) return '__default__';
+    return String(line);
+  }
+
+  private mergeGroupsForMarket(marketName: string, groups: NormalizedSelectionGroup[]): NormalizedSelectionGroup[] {
+    const merged = new Map<string, NormalizedSelectionGroup>();
+    for (const g of groups) {
+      const key = this.normalizeLineKeyForMarket(marketName, g.line);
+      if (!merged.has(key)) merged.set(key, { line: key === '__default__' ? undefined : g.line, selections: [] });
+      merged.get(key)!.selections.push(...g.selections);
+    }
+    return Array.from(merged.values());
   }
 
   async buildHierarchy(): Promise<TreeNode[]> {
@@ -306,10 +327,14 @@ class ProphetXAPI {
                 }
                 categorizedMarkets.get(categoryName)!.push(market);
                 
-                // Add diagnostic for Game Lines markets
+                // Diagnostics (one-time useful): inspect selection shape
                 if (categoryName === 'Game Lines' && /Moneyline|Run Line|Total/i.test(market.name)) {
-                  const s = market.selections;
-                  console.log('SELECTIONS TYPE', market.name, Array.isArray(s) ? 'array' : typeof s, !Array.isArray(s) && s ? Object.keys(s).slice(0,5) : undefined);
+                  const s = (market as any).selections;
+                  console.log('SELECTIONS TYPE', market.name,
+                    Array.isArray(s) ? (Array.isArray(s[0]) ? 'arrayOfArrays' : 'flatArray')
+                                     : (s && typeof s === 'object' ? 'dict' : String(s)),
+                    !Array.isArray(s) && s ? Object.keys(s).slice(0, 5) : undefined
+                  );
                 }
               }
 
@@ -370,14 +395,15 @@ class ProphetXAPI {
                       }
 
                       // Process selections using robust normalization
-                      const normalizedGroups = this.normalizeSelections(market);
+                      const baseGroups = this.normalizeSelections(market);
+                      const normalizedGroups = this.mergeGroupsForMarket(market.name, baseGroups);
+
+                      // Decide whether to show a "Line X" layer:
+                      const isLineMarket = LINE_MARKET_RE.test(market.name);
+                      const hasRealLine = normalizedGroups.some(g => g.line != null);
+                      const needsLineLayer = normalizedGroups.length > 1 || (isLineMarket && hasRealLine);
                       
                       if (normalizedGroups.length > 0) {
-                        const isLineMarket = /Run Line|Totals?|Spread|Handicap|Over|Under|Puck Line/i.test(market.name);
-                        const hasMeaningfulLine = (v: unknown) => v !== null && v !== undefined && !(typeof v === 'number' && v === 0);
-                        const needsLineLayer =
-                          normalizedGroups.length > 1 ||
-                          (isLineMarket && normalizedGroups.some(g => hasMeaningfulLine(g.line)));
 
                         if (needsLineLayer) {
                           for (const group of normalizedGroups) {
