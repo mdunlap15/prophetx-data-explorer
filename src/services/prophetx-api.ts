@@ -191,92 +191,51 @@ class ProphetXAPI {
     const groups: NormalizedSelectionGroup[] = [];
     if (!s) return groups;
 
-    // Add diagnostic logging before normalization
-    console.log(
-      'SELECTIONS SHAPE:',
-      market.name,
-      Array.isArray(s)
-        ? (Array.isArray(s[0]) ? 'arrayOfArrays' : 'flatArray')
-        : (s && typeof s === 'object' ? 'dict' : typeof s),
-      !Array.isArray(s) && s ? Object.keys(s).slice(0,5) : undefined
-    );
-
     try {
-      // Case A: selections is an ARRAY
-      if (Array.isArray(s)) {
-        // A1: array of arrays (each inner array corresponds to one line group)
-        if (s.length > 0 && Array.isArray(s[0])) {
-          (s as any[][]).forEach((group) => {
-            if (Array.isArray(group) && group.length > 0) {
-              // derive a real line if present (do NOT fall back to index)
-              const ln =
-                group[0]?.line ??
-                group.find((x: any) => x && x.line != null)?.line ??
-                undefined;
-              
-              // For Moneyline markets, treat line: 0 as undefined (no meaningful line)
-              const normalizedLine = /Moneyline/i.test(market.name) && ln === 0 ? undefined : ln;
-              
-              groups.push({ line: normalizedLine, selections: group as any[] });
-            }
-          });
-          console.log('GROUPS:', market.name, groups.map(g => ({ line: g.line, count: g.selections.length })));
-          return groups;
+      // Case A: DICTIONARY FIRST (Record<line, Selection[]>)
+      if (typeof s === 'object' && !Array.isArray(s)) {
+        for (const [k, arr] of Object.entries(s as Record<string, any[]>)) {
+          if (Array.isArray(arr)) {
+            const n = Number(k);
+            groups.push({ line: Number.isNaN(n) ? k : n, selections: arr });
+          }
         }
+        return groups;
+      }
 
-        // A2: flat array (one group, possibly without a line)
+      // Case B: ARRAY OF ARRAYS (Selection[][])
+      if (Array.isArray(s) && s.length && Array.isArray((s as any)[0])) {
+        (s as any[][]).forEach(group => {
+          if (Array.isArray(group) && group.length) {
+            // derive real line if present; NEVER use array index
+            const ln = group.find(x => x && x.line != null)?.line ?? undefined;
+            groups.push({ line: ln, selections: group as any[] });
+          }
+        });
+        return groups;
+      }
+
+      // Case C: FLAT ARRAY (Selection[])
+      if (Array.isArray(s)) {
         const byLine = new Map<string, any[]>();
-        (s as any[]).forEach((sel) => {
+        (s as any[]).forEach(sel => {
           if (sel && typeof sel === 'object') {
-            let ln = sel.line;
-            
-            // For Moneyline markets, treat line: 0 as undefined (no meaningful line)
-            if (/Moneyline/i.test(market.name) && ln === 0) {
-              ln = undefined;
-            }
-            
-            const key = ln == null ? '__default__' : String(ln);
+            const key = String(sel.line ?? '__default__');
             if (!byLine.has(key)) byLine.set(key, []);
             byLine.get(key)!.push(sel);
           }
         });
-        for (const [key, arr] of byLine) {
+        for (const [k, arr] of byLine) {
+          const n = Number(k);
           groups.push({
-            line: key === '__default__' ? undefined : (isNaN(Number(key)) ? key : Number(key)),
+            line: k === '__default__' ? undefined : (Number.isNaN(n) ? k : n),
             selections: arr,
           });
         }
-        console.log('GROUPS:', market.name, groups.map(g => ({ line: g.line, count: g.selections.length })));
-        return groups;
       }
-
-      // Case B: selections is an OBJECT (dictionary keyed by line)
-      if (typeof s === 'object') {
-        const dict = s as Record<string, any[]>;
-        for (const [k, arr] of Object.entries(dict)) {
-          if (Array.isArray(arr)) {
-            const maybeNum = Number(k);
-            let normalizedLine = Number.isNaN(maybeNum) ? k : maybeNum;
-            
-            // For Moneyline markets, treat line: 0 as undefined (no meaningful line)
-            if (/Moneyline/i.test(market.name) && normalizedLine === 0) {
-              normalizedLine = undefined;
-            }
-            
-            groups.push({
-              line: normalizedLine,
-              selections: arr,
-            });
-          }
-        }
-        console.log('GROUPS:', market.name, groups.map(g => ({ line: g.line, count: g.selections.length })));
-        return groups;
-      }
-
-      console.log('GROUPS:', market.name, groups.map(g => ({ line: g.line, count: g.selections.length })));
       return groups;
-    } catch (err) {
-      console.error(`❌ Error normalizing selections for market ${market.name}:`, err);
+    } catch (e) {
+      console.error(`normalizeSelections error for ${market.name}`, e);
       return [];
     }
   }
@@ -347,14 +306,10 @@ class ProphetXAPI {
                 }
                 categorizedMarkets.get(categoryName)!.push(market);
                 
-                // STEP 1 - Add targeted diagnostics for Game Lines markets
-                if (categoryName === 'Game Lines') {
-                  console.log('RAW MARKET', market.name, JSON.stringify(market).slice(0, 4096));
-                  console.log(
-                    'SELECTIONS TYPE',
-                    market.name,
-                    Array.isArray(market.selections) ? 'array' : typeof market.selections
-                  );
+                // Add diagnostic for Game Lines markets
+                if (categoryName === 'Game Lines' && /Moneyline|Run Line|Total/i.test(market.name)) {
+                  const s = market.selections;
+                  console.log('SELECTIONS TYPE', market.name, Array.isArray(s) ? 'array' : typeof s, !Array.isArray(s) && s ? Object.keys(s).slice(0,5) : undefined);
                 }
               }
 
@@ -418,8 +373,13 @@ class ProphetXAPI {
                       const normalizedGroups = this.normalizeSelections(market);
                       
                       if (normalizedGroups.length > 0) {
-                        // For multi-line markets (spreads/totals), create line nodes
-                        if (normalizedGroups.length > 1 || (normalizedGroups.length === 1 && normalizedGroups[0].line !== undefined && normalizedGroups[0].line !== null && /Run Line|Total|Spread|Handicap|Over|Under/i.test(market.name))) {
+                        const isLineMarket = /Run Line|Totals?|Spread|Handicap|Over|Under|Puck Line/i.test(market.name);
+                        const hasMeaningfulLine = (v: unknown) => v !== null && v !== undefined && !(typeof v === 'number' && v === 0);
+                        const needsLineLayer =
+                          normalizedGroups.length > 1 ||
+                          (isLineMarket && normalizedGroups.some(g => hasMeaningfulLine(g.line)));
+
+                        if (needsLineLayer) {
                           for (const group of normalizedGroups) {
                             const lineNode: TreeNode = {
                               id: `${market.id}-line-${group.line || 'default'}`,
