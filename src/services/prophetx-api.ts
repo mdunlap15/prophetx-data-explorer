@@ -261,6 +261,37 @@ class ProphetXAPI {
     return Array.from(merged.values());
   }
 
+  private normalizeFromMarketLines(market: any): NormalizedSelectionGroup[] {
+    const ml = market?.market_lines;
+    const out: NormalizedSelectionGroup[] = [];
+    if (!ml) return out;
+
+    // A) array of objects: [{ line|total|points|handicap, selections|options|selections_for_line: [...] }, ...]
+    if (Array.isArray(ml)) {
+      for (const item of ml) {
+        const lineVal = item?.line ?? item?.total ?? item?.points ?? item?.handicap;
+        const sels =
+          item?.selections ??
+          item?.options ??
+          item?.selections_for_line ??
+          [];
+        if (Array.isArray(sels) && sels.length) out.push({ line: lineVal, selections: sels });
+      }
+      return out;
+    }
+
+    // B) dict keyed by line: { "9.5": [...], "10": [...] }
+    if (typeof ml === 'object') {
+      for (const [k, sels] of Object.entries(ml)) {
+        if (Array.isArray(sels) && sels.length) {
+          const n = Number(k);
+          out.push({ line: Number.isNaN(n) ? k : n, selections: sels });
+        }
+      }
+    }
+    return out;
+  }
+
   async buildHierarchy(): Promise<TreeNode[]> {
     try {
       console.log('🚀 Starting buildHierarchy...');
@@ -327,14 +358,10 @@ class ProphetXAPI {
                 }
                 categorizedMarkets.get(categoryName)!.push(market);
                 
-                // Diagnostics (one-time useful): inspect selection shape
-                if (categoryName === 'Game Lines' && /Moneyline|Run Line|Total/i.test(market.name)) {
-                  const s = (market as any).selections;
-                  console.log('SELECTIONS TYPE', market.name,
-                    Array.isArray(s) ? (Array.isArray(s[0]) ? 'arrayOfArrays' : 'flatArray')
-                                     : (s && typeof s === 'object' ? 'dict' : String(s)),
-                    !Array.isArray(s) && s ? Object.keys(s).slice(0, 5) : undefined
-                  );
+                // ML SHAPE diagnostics for market_lines
+                if (categoryName === 'Game Lines' && /Run Line|Total/i.test(market.name)) {
+                  console.log('ML SHAPE', market.name, Array.isArray((market as any).market_lines) ? 'array' : typeof (market as any).market_lines);
+                  console.log('ML RAW', market.name, JSON.stringify((market as any).market_lines).slice(0, 1500));
                 }
               }
 
@@ -394,14 +421,13 @@ class ProphetXAPI {
                         console.log(`📊 MARKET SUMMARY: { marketName: "${market.name}", hasSelections: ${hasSelections}, selectionShape: "${selectionShape}", lineExamples:`, lineExamples, '}');
                       }
 
-                      // Process selections using robust normalization
-                      const baseGroups = this.normalizeSelections(market);
-                      const normalizedGroups = this.mergeGroupsForMarket(market.name, baseGroups);
+                      // Process selections from both sources
+                      const fromSelections = this.normalizeSelections(market);
+                      const fromMarketLines = this.normalizeFromMarketLines(market);
+                      let normalizedGroups = this.mergeGroupsForMarket(market.name, [...fromSelections, ...fromMarketLines]);
 
-                      // Decide whether to show a "Line X" layer:
-                      const isLineMarket = LINE_MARKET_RE.test(market.name);
-                      const hasRealLine = normalizedGroups.some(g => g.line != null);
-                      const needsLineLayer = normalizedGroups.length > 1 || (isLineMarket && hasRealLine);
+                      // Only show a line sub-layer when there are MULTIPLE unique lines
+                      const needsLineLayer = normalizedGroups.length > 1;
                       
                       if (normalizedGroups.length > 0) {
 
