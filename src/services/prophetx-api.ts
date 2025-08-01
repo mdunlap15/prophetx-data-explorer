@@ -329,6 +329,16 @@ class ProphetXAPI {
                   categorizedMarkets.set(categoryName, []);
                 }
                 categorizedMarkets.get(categoryName)!.push(market);
+                
+                // STEP 1 - Add targeted diagnostics for Game Lines markets
+                if (categoryName === 'Game Lines') {
+                  console.log('RAW MARKET', market.name, JSON.stringify(market).slice(0, 4096));
+                  console.log(
+                    'SELECTIONS TYPE',
+                    market.name,
+                    Array.isArray(market.selections) ? 'array' : typeof market.selections
+                  );
+                }
               }
 
               // Create category nodes
