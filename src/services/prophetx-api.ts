@@ -213,7 +213,11 @@ class ProphetXAPI {
                 group[0]?.line ??
                 group.find((x: any) => x && x.line != null)?.line ??
                 undefined;
-              groups.push({ line: ln, selections: group as any[] });
+              
+              // For Moneyline markets, treat line: 0 as undefined (no meaningful line)
+              const normalizedLine = /Moneyline/i.test(market.name) && ln === 0 ? undefined : ln;
+              
+              groups.push({ line: normalizedLine, selections: group as any[] });
             }
           });
           console.log('GROUPS:', market.name, groups.map(g => ({ line: g.line, count: g.selections.length })));
@@ -224,8 +228,14 @@ class ProphetXAPI {
         const byLine = new Map<string, any[]>();
         (s as any[]).forEach((sel) => {
           if (sel && typeof sel === 'object') {
-            const ln = sel.line ?? '__default__';
-            const key = String(ln);
+            let ln = sel.line;
+            
+            // For Moneyline markets, treat line: 0 as undefined (no meaningful line)
+            if (/Moneyline/i.test(market.name) && ln === 0) {
+              ln = undefined;
+            }
+            
+            const key = ln == null ? '__default__' : String(ln);
             if (!byLine.has(key)) byLine.set(key, []);
             byLine.get(key)!.push(sel);
           }
@@ -246,8 +256,15 @@ class ProphetXAPI {
         for (const [k, arr] of Object.entries(dict)) {
           if (Array.isArray(arr)) {
             const maybeNum = Number(k);
+            let normalizedLine = Number.isNaN(maybeNum) ? k : maybeNum;
+            
+            // For Moneyline markets, treat line: 0 as undefined (no meaningful line)
+            if (/Moneyline/i.test(market.name) && normalizedLine === 0) {
+              normalizedLine = undefined;
+            }
+            
             groups.push({
-              line: Number.isNaN(maybeNum) ? k : maybeNum,
+              line: normalizedLine,
               selections: arr,
             });
           }
