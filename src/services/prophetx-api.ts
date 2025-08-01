@@ -49,7 +49,7 @@ export interface TreeNode {
     odds?: number | null;
     stake?: number | null;
     status?: string;
-    line?: number | null;
+    line?: number | string | null;
     display_odds?: string | null;
   };
 }
@@ -266,29 +266,45 @@ class ProphetXAPI {
     const out: NormalizedSelectionGroup[] = [];
     if (!ml) return out;
 
-    // A) array of objects: [{ line|total|points|handicap, selections|options|selections_for_line: [...] }, ...]
+    const asLine = (v: any) => v == null ? undefined : (isNaN(Number(v)) ? v : Number(v));
+
+    const extractSelections = (item: any): any[] => {
+      // common array keys
+      if (Array.isArray(item?.selections)) return item.selections;
+      if (Array.isArray(item?.options)) return item.options;
+      if (Array.isArray(item?.selections_for_line)) return item.selections_for_line;
+      if (Array.isArray(item?.participants)) return item.participants;
+      if (Array.isArray(item?.sides)) return item.sides;
+
+      // object-keyed sides
+      const sideKeys = ['home', 'away', 'over', 'under', 'h', 'a', 'o', 'u'];
+      const sides = sideKeys.map(k => item?.[k]).filter(v => v && typeof v === 'object');
+      return sides.length ? sides : [];
+    };
+
+    // Case 1: array of line objects
     if (Array.isArray(ml)) {
       for (const item of ml) {
-        const lineVal = item?.line ?? item?.total ?? item?.points ?? item?.handicap;
-        const sels =
-          item?.selections ??
-          item?.options ??
-          item?.selections_for_line ??
-          [];
-        if (Array.isArray(sels) && sels.length) out.push({ line: lineVal, selections: sels });
+        const lineVal = asLine(item?.line ?? item?.total ?? item?.points ?? item?.handicap);
+        const sels = extractSelections(item);
+        if (sels.length) out.push({ line: lineVal, selections: sels });
       }
       return out;
     }
 
-    // B) dict keyed by line: { "9.5": [...], "10": [...] }
+    // Case 2: dictionary keyed by line
     if (typeof ml === 'object') {
-      for (const [k, sels] of Object.entries(ml)) {
-        if (Array.isArray(sels) && sels.length) {
-          const n = Number(k);
-          out.push({ line: Number.isNaN(n) ? k : n, selections: sels });
+      for (const [k, v] of Object.entries(ml)) {
+        const lineVal = asLine(k);
+        if (Array.isArray(v)) {
+          out.push({ line: lineVal, selections: v as any[] });
+        } else if (v && typeof v === 'object') {
+          const sels = extractSelections(v);
+          if (sels.length) out.push({ line: lineVal, selections: sels });
         }
       }
     }
+
     return out;
   }
 
@@ -426,11 +442,19 @@ class ProphetXAPI {
                       const fromMarketLines = this.normalizeFromMarketLines(market);
                       let normalizedGroups = this.mergeGroupsForMarket(market.name, [...fromSelections, ...fromMarketLines]);
 
+                      // Add diagnostics after merging groups
+                      console.log('GROUPS FINAL', market.name, normalizedGroups.map(g => ({ line: g.line, count: g.selections.length })));
+
+                      // De-duplicate selections inside each group
+                      const selKey = (s:any) => s?.line_id ?? `${s?.name ?? ''}|${s?.display_name ?? ''}|${s?.odds ?? ''}|${s?.line ?? ''}`;
+                      for (const g of normalizedGroups) {
+                        g.selections = Array.from(new Map(g.selections.map(s => [selKey(s), s])).values());
+                      }
+
                       // Only show a line sub-layer when there are MULTIPLE unique lines
                       const needsLineLayer = normalizedGroups.length > 1;
                       
                       if (normalizedGroups.length > 0) {
-
                         if (needsLineLayer) {
                           for (const group of normalizedGroups) {
                             const lineNode: TreeNode = {
@@ -443,13 +467,13 @@ class ProphetXAPI {
                             for (const selection of group.selections) {
                               if (selection && (selection.line_id || selection.name || selection.display_name)) {
                                 const selectionNode: TreeNode = {
-                                  id: selection.line_id || `${market.id}-${selection.name || 'unknown'}`,
+                                  id: selection.line_id || `${market.id}-${selection.name || selection.display_name || 'unknown'}`,
                                   name: selection.display_name || selection.name || 'Unknown Selection',
                                   type: 'selection',
                                   data: {
-                                    odds: selection.odds !== null && selection.odds !== undefined ? selection.odds : null,
-                                    stake: selection.stake !== null && selection.stake !== undefined ? selection.stake : null,
-                                    line: selection.line !== null && selection.line !== undefined ? selection.line : null,
+                                    odds: selection.odds ?? null,
+                                    stake: selection.stake ?? null,
+                                    line: selection.line ?? group.line ?? null,
                                     display_odds: selection.display_odds || null,
                                   },
                                 };
@@ -462,22 +486,21 @@ class ProphetXAPI {
                             }
                           }
                         } else {
-                          // For single-line markets (Moneyline), attach selections directly
-                          for (const selection of normalizedGroups[0].selections) {
-                            if (selection && (selection.line_id || selection.name || selection.display_name)) {
-                              const selectionNode: TreeNode = {
-                                id: selection.line_id || `${market.id}-${selection.name || 'unknown'}`,
-                                name: selection.display_name || selection.name || 'Unknown Selection',
-                                type: 'selection',
-                                data: {
-                                  odds: selection.odds !== null && selection.odds !== undefined ? selection.odds : null,
-                                  stake: selection.stake !== null && selection.stake !== undefined ? selection.stake : null,
-                                  line: selection.line !== null && selection.line !== undefined ? selection.line : null,
-                                  display_odds: selection.display_odds || null,
-                                },
-                              };
-                              marketNode.children!.push(selectionNode);
-                            }
+                          // NO sub-layer → selections directly, strip line
+                          for (const selection of normalizedGroups.flatMap(g => g.selections)) {
+                            if (!selection) continue;
+                            const selectionNode: TreeNode = {
+                              id: selection.line_id || `${market.id}-${selection.name || selection.display_name || 'unknown'}`,
+                              name: selection.display_name || selection.name || 'Unknown Selection',
+                              type: 'selection',
+                              data: {
+                                odds: selection.odds ?? null,
+                                stake: selection.stake ?? null,
+                                line: undefined,                // prevent "Line: 0"
+                                display_odds: selection.display_odds || null,
+                              },
+                            };
+                            marketNode.children!.push(selectionNode);
                           }
                         }
                       } else {
