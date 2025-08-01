@@ -419,7 +419,7 @@ class ProphetXAPI {
                       
                       if (normalizedGroups.length > 0) {
                         // For multi-line markets (spreads/totals), create line nodes
-                        if (normalizedGroups.length > 1 || (normalizedGroups.length === 1 && normalizedGroups[0].line != null && /Run Line|Total|Spread|Handicap|Over|Under/i.test(market.name))) {
+                        if (normalizedGroups.length > 1 || (normalizedGroups.length === 1 && normalizedGroups[0].line !== undefined && normalizedGroups[0].line !== null && /Run Line|Total|Spread|Handicap|Over|Under/i.test(market.name))) {
                           for (const group of normalizedGroups) {
                             const lineNode: TreeNode = {
                               id: `${market.id}-line-${group.line || 'default'}`,
