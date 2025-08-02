@@ -51,6 +51,8 @@ export interface TreeNode {
     status?: string;
     line?: number | string | null;
     display_odds?: string | null;
+    /** API line_id for wager placement - only present on selections */
+    line_id?: string;
   };
 }
 
@@ -71,9 +73,91 @@ const LINE_MARKET_RE = /Run Line|Totals?|Total Runs|Spread|Handicap|Over|Under|P
 
 const EDGE_FUNCTION_URL = 'https://wdknwmgqggtcayrdjvuu.supabase.co/functions/v1/prophetx-proxy';
 
+// Phase 1: Wager API Types (from ProphetX OpenAPI spec)
+export interface PlaceWagerRequest {
+  line_id: string;
+  odds: number;
+  stake: number;
+  external_id: string;
+  wager_strategy?: 'fillOrKill';
+}
+
+export interface CancelWagerRequest {
+  wager_id?: string;
+  external_id?: string;
+}
+
+export interface WagerHistory {
+  wager_id: string;
+  external_id: string;
+  line_id: string;
+  odds: number;
+  stake: number;
+  matched_stake: number;
+  unmatched_stake: number;
+  matching_status: 'unmatched' | 'fully_matched' | 'partially_matched';
+  status: 'void' | 'closed' | 'canceled' | 'manually_settled' | 'inactive' | 'wiped' | 'open' | 'invalid' | 'settled';
+  winning_status: 'lost' | 'won' | 'no_result' | 'tbd' | 'manually_lost' | 'manually_won' | 'draw' | 'push';
+  profit: number;
+  sport_event_id: number;
+  market_id: number;
+  outcome_id: number;
+  line: number;
+  created_at: string;
+  updated_at: string;
+  settled_at: string;
+  user_id: string;
+}
+
+export interface ProphetXError {
+  error: string;
+  message: string;
+}
+
+// Request Queue for rate limiting and concurrency control
+class RequestQueue {
+  private queue: Array<() => Promise<any>> = [];
+  private running = 0;
+  private readonly maxConcurrency = 3;
+
+  async add<T>(fn: () => Promise<T>): Promise<T> {
+    return new Promise((resolve, reject) => {
+      this.queue.push(async () => {
+        try {
+          const result = await fn();
+          resolve(result);
+        } catch (error) {
+          reject(error);
+        }
+      });
+      this.process();
+    });
+  }
+
+  private async process(): Promise<void> {
+    if (this.running >= this.maxConcurrency || this.queue.length === 0) {
+      return;
+    }
+
+    this.running++;
+    const task = this.queue.shift()!;
+
+    try {
+      await task();
+    } finally {
+      this.running--;
+      this.process();
+    }
+  }
+}
+
 class ProphetXAPI {
   private accessToken: string | null = null;
+  private refreshToken: string | null = null;
+  private accessExpireTime: number | null = null;
   private rateLimitRemaining: number = 100;
+  private requestQueue = new RequestQueue();
+  private refreshLock = false;
 
   async authenticate(accessKey: string, secretKey: string): Promise<string> {
     console.log('Attempting authentication with ProphetX API...');
@@ -108,11 +192,48 @@ class ProphetXAPI {
     if (data.data?.access_token) {
       console.log('Authentication successful');
       this.accessToken = data.data.access_token;
+      this.refreshToken = data.data.refresh_token;
+      this.accessExpireTime = data.data.access_expire_time;
       this.updateRateLimit(response);
+      this.startProactiveRefresh();
       return data.data.access_token;
     }
     
     throw new Error('Authentication failed: No access token received');
+  }
+
+  /**
+   * Starts proactive token refresh 60 seconds before expiry
+   */
+  private startProactiveRefresh(): void {
+    if (!this.accessExpireTime) return;
+
+    const now = Math.floor(Date.now() / 1000);
+    const timeUntilRefresh = (this.accessExpireTime - now - 60) * 1000; // 60s before expiry
+
+    if (timeUntilRefresh > 0) {
+      setTimeout(() => {
+        this.proactiveRefreshToken();
+      }, timeUntilRefresh);
+      console.log(`🔄 Proactive refresh scheduled in ${Math.round(timeUntilRefresh / 1000)}s`);
+    }
+  }
+
+  /**
+   * Proactively refreshes the access token
+   */
+  private async proactiveRefreshToken(): Promise<void> {
+    if (this.refreshLock || !this.refreshToken) return;
+
+    try {
+      this.refreshLock = true;
+      console.log('🔄 Proactively refreshing access token...');
+      await this.refreshAccessToken();
+    } catch (error) {
+      console.error('❌ Proactive refresh failed:', error);
+    } finally {
+      this.refreshLock = false;
+    }
   }
 
   private updateRateLimit(response: Response): void {
@@ -129,32 +250,78 @@ class ProphetXAPI {
     }
   }
 
-  private async makeRequest<T>(endpoint: string): Promise<T> {
-    if (!this.accessToken) {
-      throw new Error('Not authenticated. Please authenticate first.');
-    }
+  private async makeRequest<T>(endpoint: string, method: string = 'GET', body?: any): Promise<T> {
+    return this.requestQueue.add(async () => {
+      if (!this.accessToken) {
+        throw new Error('Not authenticated. Please authenticate first.');
+      }
 
-    await this.checkRateLimit();
+      await this.checkRateLimit();
 
-    const response = await fetch(EDGE_FUNCTION_URL, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        method: 'GET',
+      const requestBody: any = {
+        method,
         endpoint,
         accessToken: this.accessToken
-      }),
+      };
+
+      if (body && method !== 'GET') {
+        requestBody.body = body;
+      }
+
+      let attempt = 0;
+      const maxAttempts = 3;
+
+      while (attempt < maxAttempts) {
+        try {
+          const response = await fetch(EDGE_FUNCTION_URL, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify(requestBody),
+          });
+
+          this.updateRateLimit(response);
+
+          // Handle rate limiting with jittered backoff
+          if (response.status === 429) {
+            const delay = Math.pow(2, attempt) * 1000 + Math.random() * 1000;
+            console.log(`⏳ Rate limited, retrying in ${Math.round(delay)}ms...`);
+            await new Promise(resolve => setTimeout(resolve, delay));
+            attempt++;
+            continue;
+          }
+
+          if (response.status === 401 && !this.refreshLock) {
+            // Try to refresh token
+            try {
+              await this.refreshAccessToken();
+              requestBody.accessToken = this.accessToken;
+              attempt++;
+              continue;
+            } catch (refreshError) {
+              throw new Error('Authentication expired and refresh failed');
+            }
+          }
+
+          if (!response.ok) {
+            const errorData = await response.json().catch(() => ({}));
+            throw new Error(`API request failed: ${response.status} ${response.statusText}${errorData.error ? ` - ${errorData.error}` : ''}`);
+          }
+
+          return response.json();
+        } catch (error) {
+          if (attempt === maxAttempts - 1) throw error;
+          
+          const delay = Math.pow(2, attempt) * 1000 + Math.random() * 500;
+          console.log(`⚠️ Request failed, retrying in ${Math.round(delay)}ms...`, error);
+          await new Promise(resolve => setTimeout(resolve, delay));
+          attempt++;
+        }
+      }
+
+      throw new Error('Max retry attempts exceeded');
     });
-
-    this.updateRateLimit(response);
-
-    if (!response.ok) {
-      throw new Error(`API request failed: ${response.statusText}`);
-    }
-
-    return response.json();
   }
 
   async getTournaments(): Promise<Tournament[]> {
@@ -181,6 +348,148 @@ class ProphetXAPI {
     } catch (error) {
       console.error(`Failed to get markets for event ${eventId}:`, error);
       return [];
+    }
+  }
+
+  /**
+   * RefreshToken API
+   * POST /partner/auth/refresh
+   * Request: { "refresh_token": string }
+   * Response: { "data": { "access_token": string, "access_expire_time": number } }
+   */
+  async refreshAccessToken(): Promise<void> {
+    if (!this.refreshToken) {
+      throw new Error('No refresh token available');
+    }
+
+    console.log('🔄 Refreshing access token...');
+    
+    const response = await fetch(EDGE_FUNCTION_URL, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        method: 'POST',
+        endpoint: '/auth/refresh',
+        body: { refresh_token: this.refreshToken }
+      }),
+    });
+
+    if (!response.ok) {
+      throw new Error(`Token refresh failed: ${response.status} ${response.statusText}`);
+    }
+
+    const data = await response.json();
+    if (data.data?.access_token) {
+      this.accessToken = data.data.access_token;
+      this.accessExpireTime = data.data.access_expire_time;
+      this.startProactiveRefresh();
+      console.log('✅ Access token refreshed successfully');
+    } else {
+      throw new Error('Token refresh failed: No access token received');
+    }
+  }
+
+  /**
+   * GetOddsLadder API
+   * GET /partner/mm/get_odds_ladder
+   * Response: { "data": number[] }
+   */
+  async getOddsLadder(): Promise<number[]> {
+    const response = await this.makeRequest<{ data: number[] }>('/mm/get_odds_ladder');
+    return response.data;
+  }
+
+  /**
+   * PlaceWager API
+   * POST /partner/mm/place_wager
+   * Request: PlaceWagerRequest
+   * Response: { "data": { "success": boolean, "wager": Wager } }
+   */
+  async placeWager(request: PlaceWagerRequest): Promise<{ success: boolean; wager: any }> {
+    console.log('🎯 Placing wager:', request);
+    
+    try {
+      const response = await this.makeRequest<{ data: { success: boolean; wager: any } }>(
+        '/mm/place_wager',
+        'POST',
+        request
+      );
+      
+      console.log('✅ Wager placed successfully:', response.data);
+      return response.data;
+    } catch (error) {
+      console.error('❌ Wager placement failed:', error);
+      throw this.enhanceError(error);
+    }
+  }
+
+  /**
+   * CancelWager API
+   * POST /partner/mm/cancel_wager
+   * Request: CancelWagerRequest
+   * Response: { "data": { "Success": boolean } }
+   */
+  async cancelWager(request: CancelWagerRequest): Promise<{ success: boolean }> {
+    console.log('❌ Canceling wager:', request);
+    
+    try {
+      const response = await this.makeRequest<{ data: { Success: boolean } }>(
+        '/mm/cancel_wager',
+        'POST',
+        request
+      );
+      
+      console.log('✅ Wager canceled successfully:', response.data);
+      return { success: response.data.Success };
+    } catch (error) {
+      console.error('❌ Wager cancellation failed:', error);
+      throw this.enhanceError(error);
+    }
+  }
+
+  /**
+   * GetWagerHistories API (v2 with cursor pagination)
+   * GET /partner/v2/mm/get_wager_histories
+   * Response: { "data": { "wagers": WagerHistory[], "next_cursor": string }, "last_synced_at": string }
+   */
+  async getMyWagers(params?: {
+    event_id?: string;
+    market_id?: string;
+    matching_status?: 'unmatched' | 'fully_matched' | 'partially_matched';
+    status?: string;
+    from?: number;
+    to?: number;
+    limit?: number;
+    next_cursor?: string;
+  }): Promise<{ wagers: WagerHistory[]; next_cursor?: string; last_synced_at: string }> {
+    const queryParams = new URLSearchParams();
+    
+    if (params) {
+      Object.entries(params).forEach(([key, value]) => {
+        if (value !== undefined) {
+          queryParams.append(key, String(value));
+        }
+      });
+    }
+
+    const endpoint = `/v2/mm/get_wager_histories${queryParams.toString() ? `?${queryParams.toString()}` : ''}`;
+    
+    try {
+      const response = await this.makeRequest<{ 
+        data: { wagers: WagerHistory[]; next_cursor?: string }; 
+        last_synced_at: string 
+      }>(endpoint);
+      
+      return {
+        wagers: response.data.wagers,
+        next_cursor: response.data.next_cursor,
+        last_synced_at: response.last_synced_at
+      };
+    } catch (error) {
+      console.error('❌ Failed to get wager histories:', error);
+      throw this.enhanceError(error);
     }
   }
 
@@ -259,6 +568,48 @@ class ProphetXAPI {
       merged.get(key)!.selections.push(...g.selections);
     }
     return Array.from(merged.values());
+  }
+
+  /**
+   * Enhances error messages with ProphetX-specific error codes and hints
+   */
+  private enhanceError(error: any): Error {
+    if (error instanceof Error) {
+      const message = error.message;
+      const errorCodeMatch = message.match(/"error":\s*"([^"]+)"/);
+      const errorMsgMatch = message.match(/"message":\s*"([^"]+)"/);
+      
+      if (errorCodeMatch) {
+        const code = errorCodeMatch[1];
+        const apiMessage = errorMsgMatch ? errorMsgMatch[1] : message;
+        const hint = this.getErrorHint(code);
+        
+        return new Error(`${code}: ${apiMessage}${hint ? ` (${hint})` : ''}`);
+      }
+    }
+    
+    return error instanceof Error ? error : new Error(String(error));
+  }
+
+  /**
+   * Maps ProphetX error codes to user-friendly hints
+   */
+  private getErrorHint(code: string): string | null {
+    const hints: Record<string, string> = {
+      'invalid_line_id': 'The selection may no longer be available',
+      'insufficient_amount': 'Check your account balance',
+      'wager_limit_exceeded': 'Maximum 20 wagers per batch',
+      'invalid_stake': 'Stake must be positive and within limits',
+      'wager_invalid_odds': 'Odds must be greater than 1.0',
+      'event_not_available': 'Event is no longer accepting bets',
+      'rate_limit_reached': 'Too many requests, will retry automatically',
+      'wager_external_id_existed': 'External ID already used, generate new one',
+      'wager_already_matched': 'Cannot cancel matched wager',
+      'wager_already_cancelled': 'Wager was already cancelled',
+      'unauthorized': 'Authentication expired, will refresh automatically'
+    };
+    
+    return hints[code] || null;
   }
 
   private normalizeFromMarketLines(market: any): NormalizedSelectionGroup[] {
@@ -489,7 +840,7 @@ class ProphetXAPI {
                           // NO sub-layer → selections directly, strip line
                           for (const selection of normalizedGroups.flatMap(g => g.selections)) {
                             if (!selection) continue;
-                            const selectionNode: TreeNode = {
+                                const selectionNode: TreeNode = {
                               id: selection.line_id || `${market.id}-${selection.name || selection.display_name || 'unknown'}`,
                               name: selection.display_name || selection.name || 'Unknown Selection',
                               type: 'selection',
