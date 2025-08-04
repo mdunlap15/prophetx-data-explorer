@@ -53,9 +53,15 @@ export function useWagerPolling(options: UseWagerPollingOptions = {}): WagerPoll
     setError(null);
 
     try {
+      // ProphetX API requires date range - default to last 7 days
+      const now = Math.floor(Date.now() / 1000);
+      const sevenDaysAgo = now - (7 * 24 * 60 * 60);
+      
       const params: any = {
         limit: 50,
-        next_cursor: cursor
+        next_cursor: cursor,
+        from: sevenDaysAgo,
+        to: now
       };
 
       if (eventId) params.event_id = eventId;
