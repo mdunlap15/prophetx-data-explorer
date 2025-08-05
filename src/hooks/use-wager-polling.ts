@@ -67,20 +67,20 @@ export function useWagerPolling(options: UseWagerPollingOptions = {}): WagerPoll
       if (eventId) params.event_id = eventId;
       if (marketId) params.market_id = marketId;
 
-      const result = await prophetXAPI.getMyWagers(params);
+      const allWagers = await prophetXAPI.getMyWagers(params);
 
       if (append) {
-        setWagers(prev => [...prev, ...result.wagers]);
+        setWagers(prev => [...prev, ...allWagers]);
       } else {
-        setWagers(result.wagers);
+        setWagers(allWagers);
       }
 
-      setNextCursor(result.next_cursor);
-      setHasMore(!!result.next_cursor);
-      setLastSyncedAt(result.last_synced_at);
+      setNextCursor(undefined); // Updated API handles pagination internally
+      setHasMore(false); // No more cursor pagination needed
+      setLastSyncedAt(new Date().toISOString());
       retryCountRef.current = 0; // Reset retry count on success
 
-      console.log(`📊 Fetched ${result.wagers.length} wagers${eventId ? ` for event ${eventId}` : ''}`);
+      console.log(`📊 Fetched ${allWagers.length} wagers${eventId ? ` for event ${eventId}` : ''}`);
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : 'Failed to fetch wagers';
       setError(errorMessage);

@@ -10,14 +10,26 @@ interface DataTreeViewProps {
   onLoadData: () => void;
   isLoading: boolean;
   isAuthenticated: boolean;
+  onSelectSelection?: (rec: SelectionRecord) => void;
+}
+
+interface SelectionRecord {
+  selectionId: string;
+  displayName: string;
+  eventId?: string;
+  marketId?: string;
+  line?: number | string | null;
+  marketName?: string;
+  categoryName?: string;
 }
 
 interface TreeItemProps {
   node: TreeNode;
   level: number;
+  onSelectSelection?: (rec: SelectionRecord) => void;
 }
 
-const TreeItem = ({ node, level }: TreeItemProps) => {
+const TreeItem = ({ node, level, onSelectSelection }: TreeItemProps) => {
   const [isExpanded, setIsExpanded] = useState(false);
   const hasChildren = node.children && node.children.length > 0;
 
@@ -122,7 +134,19 @@ const TreeItem = ({ node, level }: TreeItemProps) => {
           level > 0 ? 'ml-' + (level * 4) : ''
         }`}
         style={{ marginLeft: `${level * 20}px` }}
-        onClick={() => hasChildren && setIsExpanded(!isExpanded)}
+        onClick={() => {
+          if (node.type === 'selection') {
+            onSelectSelection?.({
+              selectionId: (node.data?.line_id as string) || node.id,
+              displayName: node.name,
+              line: node.data?.line,
+              marketName: 'Market', // Could be extracted from parent
+              categoryName: 'Category', // Could be extracted from parent
+            });
+          } else if (hasChildren) {
+            setIsExpanded(!isExpanded);
+          }
+        }}
       >
         {renderNodeContent()}
       </div>
@@ -130,7 +154,7 @@ const TreeItem = ({ node, level }: TreeItemProps) => {
       {hasChildren && isExpanded && (
         <div className="space-y-1">
           {node.children!.map((child) => (
-            <TreeItem key={child.id} node={child} level={level + 1} />
+            <TreeItem key={child.id} node={child} level={level + 1} onSelectSelection={onSelectSelection} />
           ))}
         </div>
       )}
@@ -138,7 +162,7 @@ const TreeItem = ({ node, level }: TreeItemProps) => {
   );
 };
 
-export const DataTreeView = ({ data, onLoadData, isLoading, isAuthenticated }: DataTreeViewProps) => {
+export const DataTreeView = ({ data, onLoadData, isLoading, isAuthenticated, onSelectSelection }: DataTreeViewProps) => {
   return (
     <Card className="w-full">
       <CardHeader>
@@ -168,7 +192,7 @@ export const DataTreeView = ({ data, onLoadData, isLoading, isAuthenticated }: D
         ) : (
           <div className="space-y-1 max-h-96 overflow-y-auto border rounded-md p-2">
             {data.map((node) => (
-              <TreeItem key={node.id} node={node} level={0} />
+              <TreeItem key={node.id} node={node} level={0} onSelectSelection={onSelectSelection} />
             ))}
           </div>
         )}

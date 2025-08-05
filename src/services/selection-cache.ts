@@ -89,16 +89,19 @@ class SelectionCache {
                         for (const selection of selectionGroup.children) {
                           totalSelections++;
                           
-                          // Only include selections with valid line_id
-                          const line_id = selection.data?.line_id;
-                          if (!line_id || typeof line_id !== 'string') {
+                          // Accept either data.line_id OR node.id as line_id source
+                          const lineId = 
+                            (selection.data?.line_id as string) ||
+                            (selection.id as string);
+
+                          if (!lineId || typeof lineId !== 'string') {
                             console.log(`⚠️ Skipping selection without line_id: ${selection.name}`);
                             continue;
                           }
 
                           selectionsWithLineId++;
                           const record: SelectionRecord = {
-                            line_id,
+                            line_id: lineId,
                             internalId: selection.id,
                             name: selection.name,
                             odds: selection.data?.odds ?? null,
@@ -111,7 +114,7 @@ class SelectionCache {
                           };
 
                           lineCache.set(selection.id, record);
-                          this.line_idIndex.set(line_id, record);
+                          this.line_idIndex.set(lineId, record);
                         }
                       }
                     }
@@ -252,6 +255,20 @@ class SelectionCache {
     this.line_idIndex.clear();
     this.lastUpdated = null;
   }
+}
+
+export function flattenSelectionCache(cache: SelectionCache): SelectionRecord[] {
+  const records: SelectionRecord[] = [];
+  for (const eventMap of (cache as any).cache.values()) {
+    for (const marketMap of eventMap.values()) {
+      for (const lineMap of marketMap.values()) {
+        for (const record of lineMap.values()) {
+          records.push(record);
+        }
+      }
+    }
+  }
+  return records;
 }
 
 export const selectionCache = new SelectionCache();

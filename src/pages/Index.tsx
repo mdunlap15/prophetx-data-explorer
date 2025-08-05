@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { AuthForm } from '@/components/AuthForm';
 import { DataTreeView } from '@/components/DataTreeView';
 import { prophetXAPI, TreeNode } from '@/services/prophetx-api';
-import { selectionCache } from '@/services/selection-cache';
+import { selectionCache, flattenSelectionCache, SelectionRecord } from '@/services/selection-cache';
 import { setOddsLadder, buildWagerPayload, generateExternalId, testOddsConversions } from '@/utils/betting-utils';
 import { useWagerPolling } from '@/hooks/use-wager-polling';
 import { toast } from 'sonner';
@@ -17,6 +17,8 @@ const Index = () => {
   const [treeData, setTreeData] = useState<TreeNode[]>([]);
   const [isDataLoading, setIsDataLoading] = useState(false);
   const [testWagerId, setTestWagerId] = useState<string | null>(null);
+  const [selCache, setSelCache] = useState(selectionCache);
+  const [activeSel, setActiveSel] = useState<SelectionRecord | null>(null);
 
   // Phase 1: Wager polling for testing
   const wagerPolling = useWagerPolling({
@@ -67,6 +69,7 @@ const Index = () => {
       
       // Phase 1: Build selection cache from tree data
       selectionCache.buildFromTreeData(data);
+      setSelCache(selectionCache);
       const cacheStats = selectionCache.getStats();
       console.log('📊 Selection cache stats:', cacheStats);
       
@@ -88,44 +91,35 @@ const Index = () => {
   // Phase 1: Test wager placement
   const handleTestWager = async () => {
     try {
-      const cacheStats = selectionCache.getStats();
-      if (cacheStats.selections === 0) {
-        toast.error('No selections available. Load data first.');
+      const all = flattenSelectionCache(selCache);
+      const sel = activeSel ?? all[0];
+      
+      if (!sel) {
+        toast.error('Pick a selection first');
         return;
       }
 
-      // Find first available selection with line_id
-      const firstEvent = Array.from(treeData).find(t => t.children?.length);
-      if (!firstEvent?.children?.length) {
-        toast.error('No events found for testing');
-        return;
-      }
-
-      const eventSelections = selectionCache.getEventSelections(firstEvent.children[0].id);
-      if (eventSelections.length === 0) {
-        toast.error('No wager-eligible selections found in first event');
-        return;
-      }
-
-      const testSelection = eventSelections[0];
-      console.log('🎯 Testing with selection:', testSelection);
-
+      // Build wager payload using the real line_id
       const payload = buildWagerPayload({
-        line_id: testSelection.line_id,
-        odds: testSelection.odds || 2.0,
-        stake: 10.00,
-        external_id: generateExternalId('test')
+        line_id: sel.line_id,
+        odds: 2.0, // Fixed test odds
+        stake: 1   // Fixed test stake
       });
 
-      console.log('📝 Test wager payload:', payload);
-      
+      console.log('📦 Wager payload:', payload);
+      console.log('🧪 Testing with selection:', sel);
+
       const result = await prophetXAPI.placeWager(payload);
-      setTestWagerId(result.wager?.id || 'unknown');
-      
-      toast.success(`✅ Test wager placed! External ID: ${payload.external_id}`);
-      
-      // Refresh wager list
-      wagerPolling.refresh();
+      console.log('✅ Wager result:', result);
+
+      if (result.success && result.wager) {
+        setTestWagerId(result.wager.external_id);
+        toast.success(`✅ Test wager placed: ${result.wager.external_id}`);
+        // Refresh wager list
+        wagerPolling.refresh();
+      } else {
+        toast.error('❌ Failed to place test wager');
+      }
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Failed to place test wager';
       toast.error(`❌ ${errorMessage}`);
@@ -185,6 +179,20 @@ const Index = () => {
               onLoadData={handleLoadData}
               isLoading={isDataLoading}
               isAuthenticated={isAuthenticated}
+              onSelectSelection={(rec) => {
+                setActiveSel({
+                  line_id: rec.selectionId,
+                  internalId: rec.selectionId,
+                  name: rec.displayName,
+                  odds: null,
+                  stake: null,
+                  line: rec.line,
+                  eventId: '',
+                  marketId: '',
+                  lineKey: '',
+                  rawData: {}
+                });
+              }}
             />
           </div>
         </div>
@@ -215,7 +223,7 @@ const Index = () => {
                 <div>
                   <span className="font-medium">Wager-Eligible:</span>{' '}
                   <span className="text-muted-foreground">
-                    {selectionCache.getStats().selections}
+                    {flattenSelectionCache(selCache).length}
                   </span>
                 </div>
               </div>
@@ -230,7 +238,7 @@ const Index = () => {
                 <div className="flex gap-2">
                   <Button 
                     onClick={handleTestWager}
-                    disabled={!isAuthenticated || isDataLoading || treeData.length === 0}
+                    disabled={!isAuthenticated || (!activeSel && flattenSelectionCache(selCache).length === 0)}
                     variant="outline"
                   >
                     Place Test Wager
@@ -249,6 +257,11 @@ const Index = () => {
                     Test Wager ID: {testWagerId}
                   </div>
                 )}
+                {activeSel && (
+                  <div className="text-sm text-muted-foreground">
+                    Selected: {activeSel.name} (ID: {activeSel.line_id})
+                  </div>
+                )}
 
                 <div className="border rounded-lg p-3">
                   <h4 className="font-medium mb-2">My Wagers ({wagerPolling.wagers.length})</h4>
@@ -257,13 +270,15 @@ const Index = () => {
                   {wagerPolling.wagers.length === 0 && !wagerPolling.isLoading && (
                     <div className="text-sm text-muted-foreground">No wagers found</div>
                   )}
-                  {wagerPolling.wagers.slice(0, 3).map(wager => (
-                    <div key={wager.wager_id} className="text-xs bg-muted p-2 rounded mb-1">
-                      <div>ID: {wager.external_id}</div>
-                      <div>Status: {wager.status} | Matching: {wager.matching_status}</div>
-                      <div>Stake: {wager.stake} | Odds: {wager.odds}</div>
-                    </div>
-                  ))}
+                  <div className="max-h-64 overflow-y-auto">
+                    {wagerPolling.wagers.map(wager => (
+                      <div key={wager.wager_id} className="text-xs bg-muted p-2 rounded mb-1">
+                        <div>ID: {wager.external_id}</div>
+                        <div>Status: {wager.status} | Matching: {wager.matching_status}</div>
+                        <div>Stake: {wager.stake} | Odds: {wager.odds}</div>
+                      </div>
+                    ))}
+                  </div>
                   {wagerPolling.hasMore && (
                     <Button 
                       onClick={wagerPolling.loadMore} 

@@ -454,7 +454,7 @@ class ProphetXAPI {
    * GET /partner/v2/mm/get_wager_histories
    * Response: { "data": { "wagers": WagerHistory[], "next_cursor": string }, "last_synced_at": string }
    */
-  async getMyWagers(params?: {
+  async getMyWagers(filters?: {
     event_id?: string;
     market_id?: string;
     matching_status?: 'unmatched' | 'fully_matched' | 'partially_matched';
@@ -462,35 +462,38 @@ class ProphetXAPI {
     from?: number;
     to?: number;
     limit?: number;
-    next_cursor?: string;
-  }): Promise<{ wagers: WagerHistory[]; next_cursor?: string; last_synced_at: string }> {
-    const queryParams = new URLSearchParams();
+  }): Promise<WagerHistory[]> {
+    const all: WagerHistory[] = [];
+    let cursor: string | undefined;
     
-    if (params) {
+    do {
+      const params: any = { ...(filters || {}) };
+      if (cursor) params.cursor = cursor;
+      
+      const queryParams = new URLSearchParams();
       Object.entries(params).forEach(([key, value]) => {
         if (value !== undefined) {
           queryParams.append(key, String(value));
         }
       });
-    }
 
-    const endpoint = `/v2/mm/get_wager_histories${queryParams.toString() ? `?${queryParams.toString()}` : ''}`;
-    
-    try {
-      const response = await this.makeRequest<{ 
-        data: { wagers: WagerHistory[]; next_cursor?: string }; 
-        last_synced_at: string 
-      }>(endpoint);
+      const endpoint = `/v2/mm/get_wager_histories?${queryParams.toString()}`;
       
-      return {
-        wagers: response.data.wagers,
-        next_cursor: response.data.next_cursor,
-        last_synced_at: response.last_synced_at
-      };
-    } catch (error) {
-      console.error('❌ Failed to get wager histories:', error);
-      throw this.enhanceError(error);
-    }
+      try {
+        const response = await this.makeRequest<{ 
+          data: { wagers: WagerHistory[]; next_cursor?: string }; 
+          last_synced_at: string 
+        }>(endpoint);
+        
+        all.push(...(response.data?.wagers || []));
+        cursor = response.data?.next_cursor;
+      } catch (error) {
+        console.error('❌ Failed to get wager histories:', error);
+        throw this.enhanceError(error);
+      }
+    } while (cursor);
+    
+    return all;
   }
 
   /**
@@ -826,6 +829,7 @@ class ProphetXAPI {
                                     stake: selection.stake ?? null,
                                     line: selection.line ?? group.line ?? null,
                                     display_odds: selection.display_odds || null,
+                                    line_id: selection.line_id || undefined,
                                   },
                                 };
                                 lineNode.children!.push(selectionNode);
@@ -844,12 +848,13 @@ class ProphetXAPI {
                               id: selection.line_id || `${market.id}-${selection.name || selection.display_name || 'unknown'}`,
                               name: selection.display_name || selection.name || 'Unknown Selection',
                               type: 'selection',
-                              data: {
-                                odds: selection.odds ?? null,
-                                stake: selection.stake ?? null,
-                                line: undefined,                // prevent "Line: 0"
-                                display_odds: selection.display_odds || null,
-                              },
+                               data: {
+                                 odds: selection.odds ?? null,
+                                 stake: selection.stake ?? null,
+                                 line: undefined,                // prevent "Line: 0"
+                                 display_odds: selection.display_odds || null,
+                                 line_id: selection.line_id || undefined,
+                               },
                             };
                             marketNode.children!.push(selectionNode);
                           }
