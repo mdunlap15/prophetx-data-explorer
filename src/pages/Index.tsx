@@ -34,6 +34,24 @@ const Index = () => {
     pollInterval: 15000 // 15 seconds
   });
 
+  // Load odds ladder when authenticated
+  useEffect(() => {
+    const loadOddsLadder = async () => {
+      if (isAuthenticated && oddsLadder.length === 0) {
+        try {
+          console.log('📊 Loading odds ladder...');
+          const ladder = await prophetXAPI.getOddsLadder();
+          setOddsLadder(ladder);
+          console.log(`✅ Odds ladder loaded: ${ladder.length} ticks`);
+        } catch (error) {
+          console.warn('⚠️ Failed to load odds ladder:', error);
+        }
+      }
+    };
+
+    loadOddsLadder();
+  }, [isAuthenticated, oddsLadder.length]);
+
   const handleAuthentication = async (accessKey: string, secretKey: string) => {
     setIsLoading(true);
     setAuthError(null);
