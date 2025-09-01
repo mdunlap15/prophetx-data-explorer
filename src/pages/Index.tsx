@@ -37,15 +37,20 @@ const Index = () => {
   // Load odds ladder when authenticated
   useEffect(() => {
     const loadOddsLadder = async () => {
+      console.log('🔍 useEffect triggered - isAuthenticated:', isAuthenticated, 'oddsLadder.length:', oddsLadder.length);
+      
       if (isAuthenticated && oddsLadder.length === 0) {
         try {
           console.log('📊 Loading odds ladder...');
           const ladder = await prophetXAPI.getOddsLadder();
+          console.log('📊 Raw ladder response:', ladder);
           setOddsLadder(ladder);
           console.log(`✅ Odds ladder loaded: ${ladder.length} ticks`);
         } catch (error) {
           console.warn('⚠️ Failed to load odds ladder:', error);
         }
+      } else {
+        console.log('🔍 Skipping odds ladder load - isAuthenticated:', isAuthenticated, 'oddsLadder.length:', oddsLadder.length);
       }
     };
 
