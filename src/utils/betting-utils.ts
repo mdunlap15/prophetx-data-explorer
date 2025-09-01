@@ -9,14 +9,16 @@
  * @returns Decimal odds (e.g., 2.50, 1.50)
  */
 export function americanToDecimal(american: number): number {
-  if (american === 0) return 1.0;
+  if (american === 0 || !isFinite(american)) {
+    throw new Error('Invalid American odds');
+  }
   
   if (american > 0) {
     // Positive American odds: +150 -> 2.50
-    return (american / 100) + 1;
+    return 1 + (american / 100);
   } else {
     // Negative American odds: -200 -> 1.50
-    return (100 / Math.abs(american)) + 1;
+    return 1 + (100 / Math.abs(american));
   }
 }
 
@@ -26,7 +28,9 @@ export function americanToDecimal(american: number): number {
  * @returns American odds (e.g., +150, -200)
  */
 export function decimalToAmerican(decimal: number): number {
-  if (decimal === 1.0) return 0;
+  if (decimal <= 1) {
+    throw new Error('Invalid decimal odds');
+  }
   
   if (decimal >= 2.0) {
     // Decimal >= 2.0: 2.50 -> +150
@@ -213,6 +217,43 @@ export function calculateProfit(odds: number, stake: number): number {
  */
 export function calculateReturn(odds: number, stake: number): number {
   return odds * stake;
+}
+
+/**
+ * Rounds decimal odds to the nearest valid tick from the odds ladder
+ * @param decimal Decimal odds to clamp
+ * @param ladder Array of valid decimal odds values
+ * @returns Nearest valid tick or original odds if ladder not available
+ */
+export function clampToLadder(decimal: number, ladder: number[]): number {
+  if (!ladder?.length) return decimal;
+  
+  let best = ladder[0];
+  let bestDiff = Math.abs(decimal - best);
+  
+  for (const tick of ladder) {
+    const diff = Math.abs(decimal - tick);
+    if (diff < bestDiff) {
+      best = tick;
+      bestDiff = diff;
+    }
+  }
+  
+  return best;
+}
+
+/**
+ * Parses American odds from display string like "+150" or "-200"
+ * @param display Display odds string
+ * @returns Numeric American odds or null if invalid
+ */
+export function parseDisplayOdds(display: string): number | null {
+  if (!display) return null;
+  
+  const cleaned = display.replace(/[^\d+-]/g, '');
+  const parsed = parseInt(cleaned, 10);
+  
+  return isNaN(parsed) ? null : parsed;
 }
 
 /**

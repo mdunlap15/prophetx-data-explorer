@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { TreeNode } from '@/services/prophetx-api';
+import { SelectionRecord } from '@/services/selection-cache';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -11,16 +12,6 @@ interface DataTreeViewProps {
   isLoading: boolean;
   isAuthenticated: boolean;
   onSelectSelection?: (rec: SelectionRecord) => void;
-}
-
-interface SelectionRecord {
-  selectionId: string;
-  displayName: string;
-  eventId?: string;
-  marketId?: string;
-  line?: number | string | null;
-  marketName?: string;
-  categoryName?: string;
 }
 
 interface TreeItemProps {
@@ -137,11 +128,16 @@ const TreeItem = ({ node, level, onSelectSelection }: TreeItemProps) => {
         onClick={() => {
           if (node.type === 'selection') {
             onSelectSelection?.({
-              selectionId: (node.data?.line_id as string) || node.id,
-              displayName: node.name,
-              line: node.data?.line,
-              marketName: 'Market', // Could be extracted from parent
-              categoryName: 'Category', // Could be extracted from parent
+              line_id: (node.data?.line_id as string) || node.id,
+              internalId: node.id,
+              name: node.name,
+              odds: node.data?.odds ?? null,
+              stake: node.data?.stake ?? null,
+              line: node.data?.line ?? null,
+              eventId: '', // Could be extracted from parent hierarchy
+              marketId: '', // Could be extracted from parent hierarchy  
+              lineKey: '',
+              rawData: node.data || {}
             });
           } else if (hasChildren) {
             setIsExpanded(!isExpanded);

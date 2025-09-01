@@ -3,12 +3,14 @@ import { AuthForm } from '@/components/AuthForm';
 import { DataTreeView } from '@/components/DataTreeView';
 import { prophetXAPI, TreeNode } from '@/services/prophetx-api';
 import { selectionCache, flattenSelectionCache, SelectionRecord } from '@/services/selection-cache';
-import { setOddsLadder, buildWagerPayload, generateExternalId, testOddsConversions } from '@/utils/betting-utils';
+import { setOddsLadder, buildWagerPayload, generateExternalId, testOddsConversions, americanToDecimal, decimalToAmerican, clampToLadder, parseDisplayOdds } from '@/utils/betting-utils';
 import { useWagerPolling } from '@/hooks/use-wager-polling';
 import { toast } from 'sonner';
-import { TrendingUp } from 'lucide-react';
+import { TrendingUp, ToggleLeft, ToggleRight } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
 
 const Index = () => {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
@@ -19,6 +21,12 @@ const Index = () => {
   const [testWagerId, setTestWagerId] = useState<string | null>(null);
   const [selCache, setSelCache] = useState(selectionCache);
   const [activeSel, setActiveSel] = useState<SelectionRecord | null>(null);
+  
+  // Wager Composer State
+  const [oddsMode, setOddsMode] = useState<'american' | 'decimal'>('american');
+  const [oddsInput, setOddsInput] = useState<string>('');
+  const [stakeInput, setStakeInput] = useState<string>('10');
+  const [oddsLadder, setOddsLadder] = useState<number[]>([]);
 
   // Phase 1: Wager polling for testing
   const wagerPolling = useWagerPolling({
@@ -88,26 +96,100 @@ const Index = () => {
     }
   };
 
-  // Phase 1: Test wager placement
+  // Compute decimal odds for API
+  const computeDecimalOdds = (): number => {
+    try {
+      const american = Number(oddsInput);
+      if (!isFinite(american)) return 2.0;
+      
+      const decimalRaw = oddsMode === 'american'
+        ? americanToDecimal(american)
+        : Number(oddsInput);
+        
+      return clampToLadder(decimalRaw, oddsLadder);
+    } catch {
+      return 2.0; // fallback
+    }
+  };
+
+  // Handle selection change - prefill odds
+  const handleSelectionChange = (rec: SelectionRecord) => {
+    setActiveSel(rec);
+
+    // Pre-fill odds from selection data
+    const node = findSelectionNode(rec.line_id);
+    if (node?.data?.display_odds) {
+      const american = parseDisplayOdds(node.data.display_odds);
+      if (american !== null) {
+        setOddsInput(String(Math.abs(american)));
+        setOddsMode('american');
+        return;
+      }
+    }
+    
+    if (node?.data?.odds) {
+      try {
+        const american = decimalToAmerican(node.data.odds);
+        setOddsInput(String(Math.abs(american)));
+        setOddsMode('american');
+      } catch {
+        setOddsInput(String(node.data.odds));
+        setOddsMode('decimal');
+      }
+    } else {
+      // Default odds
+      setOddsInput(oddsMode === 'american' ? '110' : '1.91');
+    }
+  };
+
+  // Find selection node by ID
+  const findSelectionNode = (selectionId: string): TreeNode | null => {
+    const search = (nodes: TreeNode[]): TreeNode | null => {
+      for (const node of nodes) {
+        if (node.type === 'selection' && (node.data?.line_id === selectionId || node.id === selectionId)) {
+          return node;
+        }
+        if (node.children) {
+          const found = search(node.children);
+          if (found) return found;
+        }
+      }
+      return null;
+    };
+    return search(treeData);
+  };
+
+  // Phase 1: Test wager placement with composer
   const handleTestWager = async () => {
     try {
-      const all = flattenSelectionCache(selCache);
-      const sel = activeSel ?? all[0];
-      
-      if (!sel) {
+      if (!activeSel?.line_id) {
         toast.error('Pick a selection first');
         return;
       }
 
-      // Build wager payload using the real line_id
+      const stake = Number(stakeInput);
+      if (!(stake > 0)) {
+        toast.error('Enter a stake > 0');
+        return;
+      }
+
+      if (!oddsInput.trim()) {
+        toast.error('Enter valid odds');
+        return;
+      }
+
+      const decimalOdds = computeDecimalOdds();
+      
+      // Build wager payload using the real line_id and computed odds
       const payload = buildWagerPayload({
-        line_id: sel.line_id,
-        odds: 2.0, // Fixed test odds
-        stake: 1   // Fixed test stake
+        line_id: activeSel.line_id,
+        odds: decimalOdds,
+        stake: stake,
+        external_id: `test_${Date.now()}`
       });
 
       console.log('📦 Wager payload:', payload);
-      console.log('🧪 Testing with selection:', sel);
+      console.log('🧪 Testing with selection:', activeSel);
 
       const result = await prophetXAPI.placeWager(payload);
       console.log('✅ Wager result:', result);
@@ -115,14 +197,14 @@ const Index = () => {
       if (result.success && result.wager) {
         setTestWagerId(result.wager.external_id);
         toast.success(`✅ Test wager placed: ${result.wager.external_id}`);
-        // Refresh wager list
         wagerPolling.refresh();
       } else {
         toast.error('❌ Failed to place test wager');
       }
     } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : 'Failed to place test wager';
-      toast.error(`❌ ${errorMessage}`);
+      const msg = error?.message || error?.details || 'Unknown error';
+      const code = error?.code || error?.status || '';
+      toast.error(`Place wager failed: ${code} ${msg}`);
       console.error('💥 Test wager error:', error);
     }
   };
@@ -179,20 +261,7 @@ const Index = () => {
               onLoadData={handleLoadData}
               isLoading={isDataLoading}
               isAuthenticated={isAuthenticated}
-              onSelectSelection={(rec) => {
-                setActiveSel({
-                  line_id: rec.selectionId,
-                  internalId: rec.selectionId,
-                  name: rec.displayName,
-                  odds: null,
-                  stake: null,
-                  line: rec.line,
-                  eventId: '',
-                  marketId: '',
-                  lineKey: '',
-                  rawData: {}
-                });
-              }}
+              onSelectSelection={handleSelectionChange}
             />
           </div>
         </div>
@@ -238,7 +307,7 @@ const Index = () => {
                 <div className="flex gap-2">
                   <Button 
                     onClick={handleTestWager}
-                    disabled={!isAuthenticated || (!activeSel && flattenSelectionCache(selCache).length === 0)}
+                    disabled={!isAuthenticated || !activeSel?.line_id || Number(stakeInput) <= 0 || !oddsInput.trim()}
                     variant="outline"
                   >
                     Place Test Wager
@@ -258,8 +327,65 @@ const Index = () => {
                   </div>
                 )}
                 {activeSel && (
-                  <div className="text-sm text-muted-foreground">
-                    Selected: {activeSel.name} (ID: {activeSel.line_id})
+                  <div className="space-y-3">
+                    <div className="text-sm text-muted-foreground">
+                      Selected: {activeSel.name} (ID: {activeSel.line_id})
+                    </div>
+                    
+                    {/* Wager Composer */}
+                    <div className="border rounded-lg p-3 bg-muted/50">
+                      <h5 className="font-medium text-sm mb-2">Wager Composer</h5>
+                      
+                      <div className="grid grid-cols-2 gap-3">
+                        <div>
+                          <Label htmlFor="odds" className="text-xs">
+                            Odds
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="sm"
+                              className="ml-2 h-5 px-1 text-xs"
+                              onClick={() => setOddsMode(oddsMode === 'american' ? 'decimal' : 'american')}
+                            >
+                              {oddsMode === 'american' ? (
+                                <>American <ToggleLeft className="h-3 w-3 ml-1" /></>
+                              ) : (
+                                <>Decimal <ToggleRight className="h-3 w-3 ml-1" /></>
+                              )}
+                            </Button>
+                          </Label>
+                          <Input
+                            id="odds"
+                            type="number"
+                            value={oddsInput}
+                            onChange={(e) => setOddsInput(e.target.value)}
+                            placeholder={oddsMode === 'american' ? '110' : '1.91'}
+                            className="h-8 text-sm"
+                          />
+                        </div>
+                        
+                        <div>
+                          <Label htmlFor="stake" className="text-xs">Stake</Label>
+                          <Input
+                            id="stake"
+                            type="number"
+                            value={stakeInput}
+                            onChange={(e) => setStakeInput(e.target.value)}
+                            placeholder="10"
+                            min="0.01"
+                            step="0.01"
+                            className="h-8 text-sm"
+                          />
+                        </div>
+                      </div>
+                      
+                      <div className="text-xs text-muted-foreground mt-2">
+                        Decimal to send: <span className="font-mono">{computeDecimalOdds().toFixed(4)}</span>
+                        {oddsLadder.length > 0 && (
+                          <span className="ml-2">(ladder: {oddsLadder.length} ticks)</span>
+                        )}
+                      </div>
+                    </div>
                   </div>
                 )}
 

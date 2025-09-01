@@ -394,11 +394,16 @@ class ProphetXAPI {
   /**
    * GetOddsLadder API
    * GET /partner/mm/get_odds_ladder
-   * Response: { "data": number[] }
+   * Response: { "data": { "odds": number[] } }
    */
   async getOddsLadder(): Promise<number[]> {
-    const response = await this.makeRequest<{ data: number[] }>('/mm/get_odds_ladder');
-    return response.data;
+    try {
+      const response = await this.makeRequest<{ data: { odds: number[] } }>('/mm/get_odds_ladder');
+      return response.data?.odds || [];
+    } catch (error) {
+      console.error('❌ Failed to get odds ladder:', error);
+      return [];
+    }
   }
 
   /**
@@ -421,6 +426,27 @@ class ProphetXAPI {
       return response.data;
     } catch (error) {
       console.error('❌ Wager placement failed:', error);
+      
+      // Parse structured error response from ProphetX
+      if (error instanceof Error) {
+        let enhancedError = error;
+        try {
+          // Try to extract more detailed error info
+          const errorStr = error.message;
+          if (errorStr.includes('API request failed:') && errorStr.includes('-')) {
+            const parts = errorStr.split('-');
+            if (parts.length > 1) {
+              const errorBody = parts.slice(1).join('-').trim();
+              enhancedError = new Error(errorBody);
+              enhancedError.name = 'ProphetXAPIError';
+            }
+          }
+        } catch (parseErr) {
+          // Fall back to original error
+        }
+        throw this.enhanceError(enhancedError);
+      }
+      
       throw this.enhanceError(error);
     }
   }
