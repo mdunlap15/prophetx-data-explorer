@@ -59,21 +59,14 @@ serve(async (req) => {
     }
 
     if (!response.ok) {
-      // Try to parse ProphetX error response first
-      let errorData;
-      try {
-        errorData = JSON.parse(raw);
-      } catch {
-        errorData = { 
-          error: `API request failed: ${response.status} ${response.statusText}`,
-          status: response.status,
-          body: raw
-        };
-      }
-      
-      return new Response(JSON.stringify(errorData), {
-        status: response.status,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      // Forward exact ProphetX error response
+      const text = await response.text();
+      return new Response(text, { 
+        status: response.status, 
+        headers: { 
+          'content-type': response.headers.get('content-type') || 'application/json',
+          ...corsHeaders
+        } 
       });
     }
 

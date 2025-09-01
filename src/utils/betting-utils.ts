@@ -5,40 +5,36 @@
 
 /**
  * Converts American odds to decimal odds
- * @param american American odds (e.g., +150, -200)
+ * @param a American odds (e.g., +150, -200)
  * @returns Decimal odds (e.g., 2.50, 1.50)
  */
-export function americanToDecimal(american: number): number {
-  if (american === 0 || !isFinite(american)) {
-    throw new Error('Invalid American odds');
-  }
-  
-  if (american > 0) {
-    // Positive American odds: +150 -> 2.50
-    return 1 + (american / 100);
-  } else {
-    // Negative American odds: -200 -> 1.50
-    return 1 + (100 / Math.abs(american));
-  }
+export function americanToDecimal(a: number): number {
+  if (!Number.isFinite(a) || a === 0) throw new Error('Invalid American odds');
+  return a > 0 ? 1 + a / 100 : 1 + 100 / Math.abs(a);
 }
 
 /**
  * Converts decimal odds to American odds
- * @param decimal Decimal odds (e.g., 2.50, 1.50)
+ * @param d Decimal odds (e.g., 2.50, 1.50)
  * @returns American odds (e.g., +150, -200)
  */
-export function decimalToAmerican(decimal: number): number {
-  if (decimal <= 1) {
-    throw new Error('Invalid decimal odds');
-  }
-  
-  if (decimal >= 2.0) {
-    // Decimal >= 2.0: 2.50 -> +150
-    return Math.round((decimal - 1) * 100);
-  } else {
-    // Decimal < 2.0: 1.50 -> -200
-    return Math.round(-100 / (decimal - 1));
-  }
+export function decimalToAmerican(d: number): number {
+  if (!Number.isFinite(d) || d <= 1) throw new Error('Invalid decimal odds');
+  return d >= 2 ? Math.round((d - 1) * 100) : Math.round(-100 / (d - 1));
+}
+
+/**
+ * Parses American odds from input string, preserving sign
+ * @param s String input like "-146" or "+150"
+ * @returns Parsed American odds with sign preserved
+ */
+export function parseAmericanString(s: string): number {
+  if (typeof s !== 'string') throw new Error('Invalid American odds');
+  const trimmed = s.trim();
+  const sign = trimmed.startsWith('-') ? -1 : 1;
+  const n = Number(trimmed.replace(/[^\d.]/g, ''));
+  if (!Number.isFinite(n) || n === 0) throw new Error('Invalid American odds');
+  return sign * Math.round(n);
 }
 
 /**
@@ -220,25 +216,18 @@ export function calculateReturn(odds: number, stake: number): number {
 }
 
 /**
- * Rounds decimal odds to the nearest valid tick from the odds ladder
- * @param decimal Decimal odds to clamp
- * @param ladder Array of valid decimal odds values
- * @returns Nearest valid tick or original odds if ladder not available
+ * Clamps decimal odds to the nearest valid ladder tick
+ * @param decimalPrice Decimal odds to clamp
+ * @param ladder Array of valid decimal ladder values
+ * @returns Nearest valid ladder price or original if ladder unavailable
  */
-export function clampToLadder(decimal: number, ladder: number[]): number {
-  if (!ladder?.length) return decimal;
-  
-  let best = ladder[0];
-  let bestDiff = Math.abs(decimal - best);
-  
-  for (const tick of ladder) {
-    const diff = Math.abs(decimal - tick);
-    if (diff < bestDiff) {
-      best = tick;
-      bestDiff = diff;
-    }
+export function clampToLadder(decimalPrice: number, ladder: number[]): number {
+  if (!ladder?.length) return decimalPrice;
+  let best = ladder[0], diff = Math.abs(decimalPrice - best);
+  for (const p of ladder) {
+    const d = Math.abs(decimalPrice - p);
+    if (d < diff) { best = p; diff = d; }
   }
-  
   return best;
 }
 

@@ -3,7 +3,7 @@ import { AuthForm } from '@/components/AuthForm';
 import { DataTreeView } from '@/components/DataTreeView';
 import { prophetXAPI, TreeNode } from '@/services/prophetx-api';
 import { selectionCache, flattenSelectionCache, SelectionRecord } from '@/services/selection-cache';
-import { setOddsLadder, buildWagerPayload, generateExternalId, testOddsConversions, americanToDecimal, decimalToAmerican, clampToLadder, parseDisplayOdds } from '@/utils/betting-utils';
+import { setOddsLadder, buildWagerPayload, generateExternalId, testOddsConversions, americanToDecimal, decimalToAmerican, clampToLadder, parseDisplayOdds, parseAmericanString } from '@/utils/betting-utils';
 import { useWagerPolling } from '@/hooks/use-wager-polling';
 import { toast } from 'sonner';
 import { TrendingUp, ToggleLeft, ToggleRight } from 'lucide-react';
@@ -96,49 +96,65 @@ const Index = () => {
     }
   };
 
-  // Compute decimal odds for API
-  const computeDecimalOdds = (): number => {
+  // Compute decimal odds for API with proper parsing
+  const computeDecimalOdds = (): { decimalRaw: number; decimalSnapped: number } => {
     try {
-      const american = Number(oddsInput);
-      if (!isFinite(american)) return 2.0;
-      
       const decimalRaw = oddsMode === 'american'
-        ? americanToDecimal(american)
+        ? americanToDecimal(parseAmericanString(oddsInput))
         : Number(oddsInput);
-        
-      return clampToLadder(decimalRaw, oddsLadder);
+      const decimalSnapped = clampToLadder(decimalRaw, oddsLadder);
+      return { decimalRaw, decimalSnapped };
     } catch {
-      return 2.0; // fallback
+      return { decimalRaw: 2.0, decimalSnapped: 2.0 }; // fallback
     }
   };
 
-  // Handle selection change - prefill odds
+  // Toggle odds mode with conversion
+  const handleOddsToggle = () => {
+    try {
+      if (oddsMode === 'american') {
+        // American → Decimal
+        const american = parseAmericanString(oddsInput);
+        const decimal = americanToDecimal(american);
+        setOddsInput(decimal.toFixed(2));
+        setOddsMode('decimal');
+      } else {
+        // Decimal → American
+        const decimal = Number(oddsInput);
+        const american = decimalToAmerican(decimal);
+        setOddsInput(String(american));
+        setOddsMode('american');
+      }
+    } catch (error) {
+      console.warn('Odds conversion failed:', error);
+    }
+  };
+
+  // Handle selection change - prefill odds with sign preservation
   const handleSelectionChange = (rec: SelectionRecord) => {
     setActiveSel(rec);
 
     // Pre-fill odds from selection data
     const node = findSelectionNode(rec.line_id);
     if (node?.data?.display_odds) {
-      const american = parseDisplayOdds(node.data.display_odds);
-      if (american !== null) {
-        setOddsInput(String(Math.abs(american)));
-        setOddsMode('american');
-        return;
-      }
+      // Use the exact display_odds string (e.g., "-146", "+150")
+      setOddsInput(node.data.display_odds.replace(/[^\d.-]/g, ''));
+      setOddsMode('american');
+      return;
     }
     
     if (node?.data?.odds) {
       try {
         const american = decimalToAmerican(node.data.odds);
-        setOddsInput(String(Math.abs(american)));
+        setOddsInput(String(american)); // Keep the sign!
         setOddsMode('american');
       } catch {
-        setOddsInput(String(node.data.odds));
+        setOddsInput(node.data.odds.toFixed(2));
         setOddsMode('decimal');
       }
     } else {
       // Default odds
-      setOddsInput(oddsMode === 'american' ? '110' : '1.91');
+      setOddsInput(oddsMode === 'american' ? '-110' : '1.91');
     }
   };
 
@@ -178,17 +194,17 @@ const Index = () => {
         return;
       }
 
-      const decimalOdds = computeDecimalOdds();
+      const { decimalSnapped } = computeDecimalOdds();
       
-      // Build wager payload using the real line_id and computed odds
-      const payload = buildWagerPayload({
+      // Build wager payload using the real line_id and clamped decimal odds
+      const payload = {
         line_id: activeSel.line_id,
-        odds: decimalOdds,
+        odds: decimalSnapped,
         stake: stake,
         external_id: `test_${Date.now()}`
-      });
+      };
 
-      console.log('📦 Wager payload:', payload);
+      console.log('PLACE_WAGER_PAYLOAD', payload);
       console.log('🧪 Testing with selection:', activeSel);
 
       const result = await prophetXAPI.placeWager(payload);
@@ -201,7 +217,7 @@ const Index = () => {
       } else {
         toast.error('❌ Failed to place test wager');
       }
-    } catch (error) {
+    } catch (error: any) {
       const msg = error?.message || error?.details || 'Unknown error';
       const code = error?.code || error?.status || '';
       toast.error(`Place wager failed: ${code} ${msg}`);
@@ -307,7 +323,7 @@ const Index = () => {
                 <div className="flex gap-2">
                   <Button 
                     onClick={handleTestWager}
-                    disabled={!isAuthenticated || !activeSel?.line_id || Number(stakeInput) <= 0 || !oddsInput.trim()}
+                    disabled={!isAuthenticated || !activeSel?.line_id || Number(stakeInput) <= 0 || !oddsInput.trim() || oddsLadder.length === 0}
                     variant="outline"
                   >
                     Place Test Wager
@@ -345,7 +361,7 @@ const Index = () => {
                               variant="ghost"
                               size="sm"
                               className="ml-2 h-5 px-1 text-xs"
-                              onClick={() => setOddsMode(oddsMode === 'american' ? 'decimal' : 'american')}
+                              onClick={handleOddsToggle}
                             >
                               {oddsMode === 'american' ? (
                                 <>American <ToggleLeft className="h-3 w-3 ml-1" /></>
@@ -356,10 +372,10 @@ const Index = () => {
                           </Label>
                           <Input
                             id="odds"
-                            type="number"
+                            type="text"
                             value={oddsInput}
                             onChange={(e) => setOddsInput(e.target.value)}
-                            placeholder={oddsMode === 'american' ? '110' : '1.91'}
+                            placeholder={oddsMode === 'american' ? '-110' : '1.91'}
                             className="h-8 text-sm"
                           />
                         </div>
@@ -380,9 +396,19 @@ const Index = () => {
                       </div>
                       
                       <div className="text-xs text-muted-foreground mt-2">
-                        Decimal to send: <span className="font-mono">{computeDecimalOdds().toFixed(4)}</span>
-                        {oddsLadder.length > 0 && (
-                          <span className="ml-2">(ladder: {oddsLadder.length} ticks)</span>
+                        {(() => {
+                          const { decimalRaw, decimalSnapped } = computeDecimalOdds();
+                          return decimalSnapped !== decimalRaw ? (
+                            <>
+                              Decimal to send: <span className="font-mono">{decimalSnapped.toFixed(4)}</span>
+                              <span className="text-yellow-600"> (snapped from {decimalRaw.toFixed(4)})</span>
+                            </>
+                          ) : (
+                            <>Decimal to send: <span className="font-mono">{decimalRaw.toFixed(4)}</span></>
+                          );
+                        })()}
+                        {oddsLadder.length === 0 && (
+                          <span className="ml-2 text-orange-600">Loading odds ladder...</span>
                         )}
                       </div>
                     </div>

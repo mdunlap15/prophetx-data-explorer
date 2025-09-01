@@ -415,40 +415,39 @@ class ProphetXAPI {
   async placeWager(request: PlaceWagerRequest): Promise<{ success: boolean; wager: any }> {
     console.log('🎯 Placing wager:', request);
     
-    try {
-      const response = await this.makeRequest<{ data: { success: boolean; wager: any } }>(
-        '/mm/place_wager',
-        'POST',
-        request
-      );
-      
-      console.log('✅ Wager placed successfully:', response.data);
-      return response.data;
-    } catch (error) {
-      console.error('❌ Wager placement failed:', error);
-      
-      // Parse structured error response from ProphetX
-      if (error instanceof Error) {
-        let enhancedError = error;
-        try {
-          // Try to extract more detailed error info
-          const errorStr = error.message;
-          if (errorStr.includes('API request failed:') && errorStr.includes('-')) {
-            const parts = errorStr.split('-');
-            if (parts.length > 1) {
-              const errorBody = parts.slice(1).join('-').trim();
-              enhancedError = new Error(errorBody);
-              enhancedError.name = 'ProphetXAPIError';
-            }
-          }
-        } catch (parseErr) {
-          // Fall back to original error
-        }
-        throw this.enhanceError(enhancedError);
+    // Make direct request without using makeRequest wrapper for better error handling
+    const response = await fetch(EDGE_FUNCTION_URL, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        method: 'POST',
+        endpoint: '/mm/place_wager',
+        body: request,
+        accessToken: this.accessToken
+      }),
+    });
+
+    if (!response.ok) {
+      const text = await response.text();
+      let parsed;
+      try {
+        parsed = JSON.parse(text);
+      } catch {
+        parsed = { message: text };
       }
       
-      throw this.enhanceError(error);
+      const error: any = new Error(parsed?.error?.message || parsed?.message || text);
+      error.code = parsed?.error?.code;
+      error.status = response.status;
+      error.details = parsed?.error?.details;
+      throw error;
     }
+
+    const data = await response.json();
+    console.log('✅ Wager placed successfully:', data.data);
+    return data.data;
   }
 
   /**
