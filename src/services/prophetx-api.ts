@@ -398,7 +398,7 @@ class ProphetXAPI {
    */
   async getOddsLadder(): Promise<number[]> {
     try {
-      const response = await this.makeRequest<{ data: { odds: number[] } }>('/partner/mm/get_odds_ladder');
+      const response = await this.makeRequest<{ data: { odds: number[] } }>('/mm/get_odds_ladder');
       return response.data?.odds || [];
     } catch (error) {
       console.error('❌ Failed to get odds ladder:', error);
