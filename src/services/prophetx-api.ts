@@ -391,19 +391,30 @@ class ProphetXAPI {
     }
   }
 
+  // Client-side ladder cache
+  private static oddsLadderCache: number[] | null = null;
+
   /**
    * GetOddsLadder API
    * GET /partner/mm/get_odds_ladder
    * Response: { "data": { "odds": number[] } }
    */
   async getOddsLadder(): Promise<number[]> {
-    try {
-      const response = await this.makeRequest<{ data: { odds: number[] } }>('/mm/get_odds_ladder');
-      return response.data?.odds || [];
-    } catch (error) {
-      console.error('❌ Failed to get odds ladder:', error);
-      return [];
+    // Return cached ladder if available
+    if (ProphetXAPI.oddsLadderCache) {
+      return ProphetXAPI.oddsLadderCache;
     }
+
+    const response = await this.makeRequest<{ data: { odds: number[] } }>('/mm/get_odds_ladder');
+    const ladder = response.data?.odds;
+    
+    if (!ladder || ladder.length === 0) {
+      throw new Error('Odds ladder empty or missing');
+    }
+
+    // Cache the ladder
+    ProphetXAPI.oddsLadderCache = ladder;
+    return ladder;
   }
 
   /**
@@ -413,41 +424,46 @@ class ProphetXAPI {
    * Response: { "data": { "success": boolean, "wager": Wager } }
    */
   async placeWager(request: PlaceWagerRequest): Promise<{ success: boolean; wager: any }> {
-    console.log('🎯 Placing wager:', request);
+    console.log('🎯 Placing wager with clamped odds:', request);
     
-    // Make direct request without using makeRequest wrapper for better error handling
-    const response = await fetch(EDGE_FUNCTION_URL, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
+    try {
+      // Make direct request without using makeRequest wrapper for better error handling
+      const response = await fetch(EDGE_FUNCTION_URL, {
         method: 'POST',
-        endpoint: '/mm/place_wager',
-        body: request,
-        accessToken: this.accessToken
-      }),
-    });
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          method: 'POST',
+          endpoint: '/mm/place_wager',
+          body: request,
+          accessToken: this.accessToken
+        }),
+      });
 
-    if (!response.ok) {
-      const text = await response.text();
-      let parsed;
-      try {
-        parsed = JSON.parse(text);
-      } catch {
-        parsed = { message: text };
+      if (!response.ok) {
+        const text = await response.text();
+        let parsed;
+        try {
+          parsed = JSON.parse(text);
+        } catch {
+          parsed = { message: text };
+        }
+        
+        const error: any = new Error(parsed?.message || parsed?.error?.message || text);
+        error.code = parsed?.code || parsed?.error?.code;
+        error.status = response.status;
+        error.details = parsed;
+        throw error;
       }
-      
-      const error: any = new Error(parsed?.error?.message || parsed?.message || text);
-      error.code = parsed?.error?.code;
-      error.status = response.status;
-      error.details = parsed?.error?.details;
+
+      const data = await response.json();
+      console.log('✅ Wager placed successfully:', data.data);
+      return data.data;
+    } catch (error) {
+      console.error('❌ Wager placement failed:', error);
       throw error;
     }
-
-    const data = await response.json();
-    console.log('✅ Wager placed successfully:', data.data);
-    return data.data;
   }
 
   /**
@@ -937,6 +953,29 @@ class ProphetXAPI {
       return [];
     }
   }
+}
+
+/**
+ * Clamps decimal odds to nearest valid ladder tick
+ * @param decimal Decimal odds to clamp
+ * @param ladder Array of valid decimal ladder values
+ * @returns Nearest valid ladder price
+ */
+export function clampToLadder(decimal: number, ladder: number[]): number {
+  if (!ladder?.length || !isFinite(decimal)) return decimal;
+  
+  let closest = ladder[0];
+  let best = Math.abs(decimal - closest);
+  
+  for (const v of ladder) {
+    const d = Math.abs(decimal - v);
+    if (d < best) {
+      closest = v;
+      best = d;
+    }
+  }
+  
+  return closest;
 }
 
 export const prophetXAPI = new ProphetXAPI();

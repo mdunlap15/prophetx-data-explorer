@@ -11,16 +11,18 @@ interface DataTreeViewProps {
   onLoadData: () => void;
   isLoading: boolean;
   isAuthenticated: boolean;
-  onSelectSelection?: (rec: SelectionRecord) => void;
+  onSelectSelection?: (sel: { line_id: string; displayName: string; marketName: string; eventId: number }) => void;
 }
 
 interface TreeItemProps {
   node: TreeNode;
   level: number;
-  onSelectSelection?: (rec: SelectionRecord) => void;
+  onSelectSelection?: (sel: { line_id: string; displayName: string; marketName: string; eventId: number }) => void;
+  parentMarketName?: string;
+  parentEventId?: number;
 }
 
-const TreeItem = ({ node, level, onSelectSelection }: TreeItemProps) => {
+const TreeItem = ({ node, level, onSelectSelection, parentMarketName, parentEventId }: TreeItemProps) => {
   const [isExpanded, setIsExpanded] = useState(false);
   const hasChildren = node.children && node.children.length > 0;
 
@@ -129,15 +131,9 @@ const TreeItem = ({ node, level, onSelectSelection }: TreeItemProps) => {
           if (node.type === 'selection') {
             onSelectSelection?.({
               line_id: (node.data?.line_id as string) || node.id,
-              internalId: node.id,
-              name: node.name,
-              odds: node.data?.odds ?? null,
-              stake: node.data?.stake ?? null,
-              line: node.data?.line ?? null,
-              eventId: '', // Could be extracted from parent hierarchy
-              marketId: '', // Could be extracted from parent hierarchy  
-              lineKey: '',
-              rawData: node.data || {}
+              displayName: node.name,
+              marketName: parentMarketName || 'Unknown Market',
+              eventId: parentEventId || 0
             });
           } else if (hasChildren) {
             setIsExpanded(!isExpanded);
@@ -150,7 +146,14 @@ const TreeItem = ({ node, level, onSelectSelection }: TreeItemProps) => {
       {hasChildren && isExpanded && (
         <div className="space-y-1">
           {node.children!.map((child) => (
-            <TreeItem key={child.id} node={child} level={level + 1} onSelectSelection={onSelectSelection} />
+            <TreeItem 
+              key={child.id} 
+              node={child} 
+              level={level + 1} 
+              onSelectSelection={onSelectSelection} 
+              parentMarketName={node.type === 'market' ? node.name : parentMarketName}
+              parentEventId={node.type === 'event' ? parseInt(node.id) : parentEventId}
+            />
           ))}
         </div>
       )}

@@ -4,23 +4,23 @@
  */
 
 /**
- * Converts American odds to decimal odds
+ * Converts American odds to decimal odds (NaN-safe)
  * @param a American odds (e.g., +150, -200)
- * @returns Decimal odds (e.g., 2.50, 1.50)
+ * @returns Decimal odds or null if invalid
  */
-export function americanToDecimal(a: number): number {
-  if (!Number.isFinite(a) || a === 0) throw new Error('Invalid American odds');
-  return a > 0 ? 1 + a / 100 : 1 + 100 / Math.abs(a);
+export function americanToDecimal(a: number): number | null {
+  if (!Number.isFinite(a) || a === 0) return null;
+  return a >= 0 ? 1 + a / 100 : 1 + 100 / Math.abs(a);
 }
 
 /**
- * Converts decimal odds to American odds
+ * Converts decimal odds to American odds (NaN-safe)
  * @param d Decimal odds (e.g., 2.50, 1.50)
- * @returns American odds (e.g., +150, -200)
+ * @returns American odds or null if invalid
  */
-export function decimalToAmerican(d: number): number {
-  if (!Number.isFinite(d) || d <= 1) throw new Error('Invalid decimal odds');
-  return d >= 2 ? Math.round((d - 1) * 100) : Math.round(-100 / (d - 1));
+export function decimalToAmerican(d: number): number | null {
+  if (!Number.isFinite(d) || d <= 1) return null;
+  return d >= 2 ? Math.round((d - 1) * 100) : -Math.round(100 / (d - 1));
 }
 
 /**
