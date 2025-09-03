@@ -54,18 +54,21 @@ export default function Index() {
   const cancelRef = useRef<boolean>(false);
 
   // Load odds ladder once after authentication
+  const hasRequested = useRef(false);
+  
   useEffect(() => {
     let cancelled = false;
     
     const loadOddsLadder = async () => {
-      if (!isAuthenticated || oddsLadder !== null) return;
+      if (!isAuthenticated || ladderLoading || hasRequested.current) return;
       
+      hasRequested.current = true;
       setLadderLoading(true);
       setLadderError(null);
       
       try {
         console.log('📊 Loading odds ladder...');
-        const ticks = await prophetXAPI.getOddsLadder();
+        const ticks = await prophetXAPI.getOddsLadder(true); // First call after auth
         if (!cancelled) {
           setOddsLadder(ticks);
           console.log(`✅ Odds ladder loaded: ${ticks.length}`);
@@ -83,6 +86,7 @@ export default function Index() {
       } finally {
         if (!cancelled) {
           setLadderLoading(false);
+          hasRequested.current = false;
         }
       }
     };
@@ -94,7 +98,7 @@ export default function Index() {
     return () => {
       cancelled = true;
     };
-  }, [isAuthenticated, oddsLadder, toast]);
+  }, [isAuthenticated]);
 
   // Derived values for wager composer
   const baseDecimal = oddsMode === 'american' 
@@ -107,14 +111,15 @@ export default function Index() {
 
   // Button enable conditions
   const canPlaceWager = 
-    activeSel?.line_id &&
-    !ladderLoading &&
+    !!activeSel?.line_id &&
+    Array.isArray(oddsLadder) && oddsLadder.length > 0 &&
     !ladderError &&
-    Number.isFinite(baseDecimal) &&
-    baseDecimal > 1.01 &&
-    Number.isFinite(decimalToSend) &&
+    !ladderLoading &&
     Number(stakeInput) > 0 &&
-    Number.isFinite(Number(stakeInput));
+    (() => {
+      const decimal = americanToDecimal(Number(oddsInput));
+      return decimal && clampToLadder(decimal, oddsLadder) > 1.01;
+    })();
 
   const handleAuthentication = async (accessKey: string, secretKey: string) => {
     setIsAuthenticating(true);

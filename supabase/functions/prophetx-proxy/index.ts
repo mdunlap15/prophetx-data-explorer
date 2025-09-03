@@ -16,7 +16,7 @@ serve(async (req) => {
   try {
     const { method = 'GET', endpoint, body, accessToken } = await req.json();
     
-    console.log(`${method} ${endpoint}`);
+    console.log(`→ ${method} ${endpoint}`);
 
     const headers: Record<string, string> = {
       'Content-Type': 'application/json',
@@ -40,7 +40,7 @@ serve(async (req) => {
     const contentType = response.headers.get('content-type');
 
     if (!response.ok) {
-      console.log(`Status ${response.status}: ${raw.slice(0, 1000)}`);
+      console.error(`← ${response.status} ${endpoint} :: `, raw.slice(0, 1000));
       // Forward exact ProphetX error response
       return new Response(raw, { 
         status: response.status, 

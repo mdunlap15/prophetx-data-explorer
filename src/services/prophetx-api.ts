@@ -196,6 +196,7 @@ class ProphetXAPI {
       this.accessExpireTime = data.data.access_expire_time;
       this.updateRateLimit(response);
       this.startProactiveRefresh();
+      ProphetXAPI.clearOddsLadderCache();
       return data.data.access_token;
     }
     
@@ -392,19 +393,21 @@ class ProphetXAPI {
   }
 
   // Client-side ladder cache
-  private static oddsLadderCache: number[] | null = null;
+  static oddsLadderCache: number[] | null = null;
+  static clearOddsLadderCache() { ProphetXAPI.oddsLadderCache = null; }
 
   /**
    * GetOddsLadder API
    * GET /partner/mm/get_odds_ladder
    * Response: { "data": { "odds": number[] } }
    */
-  async getOddsLadder(): Promise<number[]> {
-    // Return cached ladder if available
-    if (ProphetXAPI.oddsLadderCache) {
+  async getOddsLadder(force = false): Promise<number[]> {
+    // Return cached ladder if available and not forcing reload
+    if (!force && ProphetXAPI.oddsLadderCache) {
       return ProphetXAPI.oddsLadderCache;
     }
 
+    console.log('🔄 Calling /mm/get_odds_ladder');
     const response = await this.makeRequest<{ data: { odds: number[] } }>('/mm/get_odds_ladder');
     const ladder = response.data?.odds;
     
@@ -414,6 +417,7 @@ class ProphetXAPI {
 
     // Cache the ladder
     ProphetXAPI.oddsLadderCache = ladder;
+    console.log(`✅ Odds ladder loaded: ${ladder.length} ticks`);
     return ladder;
   }
 
