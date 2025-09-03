@@ -7,7 +7,7 @@ import { Badge } from '@/components/ui/badge';
 import { useToast } from '@/hooks/use-toast';
 import { AuthForm } from '@/components/AuthForm';
 import { DataTreeView } from '@/components/DataTreeView';
-import { prophetXAPI, TreeNode, clampToLadder } from '@/services/prophetx-api';
+import { prophetXAPI, TreeNode } from '@/services/prophetx-api';
 import { selectionCache, flattenSelectionCache } from '@/services/selection-cache';
 import { useWagerPolling } from '@/hooks/use-wager-polling';
 import { americanToDecimal, decimalToAmerican, parseDisplayOdds } from '@/utils/betting-utils';
@@ -23,10 +23,7 @@ export default function Index() {
   const [isLoadingData, setIsLoadingData] = useState(false);
   const [dataError, setDataError] = useState<string | null>(null);
 
-  // Odds ladder state
-  const [oddsLadder, setOddsLadder] = useState<number[] | null>(null);
-  const [ladderLoading, setLadderLoading] = useState(false);
-  const [ladderError, setLadderError] = useState<string | null>(null);
+  // Odds ladder removed - supporting any integer American odds
 
   // Wager composer state
   const [oddsMode, setOddsMode] = useState<'american' | 'decimal'>('american');
@@ -53,73 +50,22 @@ export default function Index() {
   const { toast } = useToast();
   const cancelRef = useRef<boolean>(false);
 
-  // Load odds ladder once after authentication
-  const hasRequested = useRef(false);
-  
-  useEffect(() => {
-    let cancelled = false;
-    
-    const loadOddsLadder = async () => {
-      if (!isAuthenticated || ladderLoading || hasRequested.current) return;
-      
-      hasRequested.current = true;
-      setLadderLoading(true);
-      setLadderError(null);
-      
-      try {
-        console.log('📊 Loading odds ladder...');
-        const ticks = await prophetXAPI.getOddsLadder(true); // First call after auth
-        if (!cancelled) {
-          setOddsLadder(ticks);
-          console.log(`✅ Odds ladder loaded: ${ticks.length}`);
-        }
-      } catch (error: any) {
-        if (!cancelled) {
-          setOddsLadder(null);
-          setLadderError(error?.message || 'Failed to load odds ladder');
-          toast({
-            title: "Odds ladder error",
-            description: `${error?.code || ''} ${error?.message || error}`,
-            variant: "destructive"
-          });
-        }
-      } finally {
-        if (!cancelled) {
-          setLadderLoading(false);
-          hasRequested.current = false;
-        }
-      }
-    };
+  // Odds ladder loading removed - supporting any integer American odds directly
 
-    if (isAuthenticated) {
-      loadOddsLadder();
-    }
-
-    return () => {
-      cancelled = true;
-    };
-  }, [isAuthenticated]);
-
-  // Derived values for wager composer
+  // Derived values for wager composer  
   const baseDecimal = oddsMode === 'american' 
-    ? americanToDecimal(Number(oddsInput)) || NaN
+    ? americanToDecimal(Number(oddsInput))
     : Number(oddsInput);
-    
-  const decimalToSend = oddsLadder 
-    ? clampToLadder(baseDecimal, oddsLadder)
-    : baseDecimal;
 
-  // Button enable conditions
+  const decimalToSend = baseDecimal; // Direct conversion, no ladder clamping
+
+  // Button enable conditions - simplified without odds ladder
   const canPlaceWager = 
     !!activeSel?.line_id &&
-    Array.isArray(oddsLadder) && oddsLadder.length > 0 &&
-    !ladderError &&
-    !ladderLoading &&
     Number(stakeInput) > 0 &&
-    (() => {
-      const decimal = americanToDecimal(Number(oddsInput));
-      return decimal && clampToLadder(decimal, oddsLadder) > 1.01;
-    })();
+    decimalToSend &&
+    decimalToSend > 1.01 &&
+    decimalToSend < 1000;
 
   const handleAuthentication = async (accessKey: string, secretKey: string) => {
     setIsAuthenticating(true);
@@ -397,19 +343,9 @@ export default function Index() {
 
                 {/* Helper Text */}
                 <div className="text-xs text-muted-foreground">
-                  {ladderLoading ? (
-                    "Loading odds ladder..."
-                  ) : ladderError ? (
-                    <span className="text-destructive">{ladderError}</span>
-                  ) : (
-                    <>
-                      Decimal to send: {Number.isFinite(decimalToSend) ? decimalToSend.toFixed(4) : 'N/A'}
-                      {oddsLadder && Number.isFinite(baseDecimal) && Number.isFinite(decimalToSend) && 
-                       Math.abs(baseDecimal - decimalToSend) > 0.0001 && (
-                        <span> (clamped from {baseDecimal.toFixed(4)})</span>
-                      )}
-                    </>
-                  )}
+                  Enter any integer American odds (e.g., +150, -200, +101, -102)
+                  <br />
+                  Decimal to send: {Number.isFinite(decimalToSend) ? decimalToSend.toFixed(4) : 'N/A'}
                 </div>
 
                 {wagerError && (

@@ -37,56 +37,7 @@ export function parseAmericanString(s: string): number {
   return sign * Math.round(n);
 }
 
-/**
- * Cached odds ladder from ProphetX API
- * Will be populated by getOddsLadder() call
- */
-let oddsLadder: number[] = [];
-
-/**
- * Sets the odds ladder cache
- */
-export function setOddsLadder(ladder: number[]): void {
-  oddsLadder = [...ladder].sort((a, b) => a - b);
-  console.log(`📊 Odds ladder cached: ${oddsLadder.length} ticks`);
-}
-
-/**
- * Gets the cached odds ladder
- */
-export function getOddsLadder(): number[] {
-  return [...oddsLadder];
-}
-
-/**
- * Rounds odds to the nearest valid tick from the odds ladder
- * @param odds Decimal odds to round
- * @returns Nearest valid tick or original odds if ladder not loaded
- */
-export function roundToValidTick(odds: number): number {
-  if (oddsLadder.length === 0) {
-    console.warn('⚠️ Odds ladder not loaded, returning original odds');
-    return odds;
-  }
-
-  // Convert to American odds for ladder matching (ladder likely in American format)
-  const american = decimalToAmerican(odds);
-  
-  // Find closest tick
-  let closest = oddsLadder[0];
-  let minDiff = Math.abs(american - closest);
-  
-  for (const tick of oddsLadder) {
-    const diff = Math.abs(american - tick);
-    if (diff < minDiff) {
-      minDiff = diff;
-      closest = tick;
-    }
-  }
-
-  // Convert back to decimal
-  return americanToDecimal(closest);
-}
+// Odds ladder functionality removed - now supports any integer American odds
 
 /**
  * Validates stake amount according to ProphetX rules
@@ -165,11 +116,10 @@ export function buildWagerPayload(params: {
     throw new Error('line_id is required and must be a string');
   }
 
-  // Validate and round odds
+  // Validate odds (no rounding - accept any valid decimal odds)
   if (typeof params.odds !== 'number' || params.odds <= 1.0) {
     throw new Error('odds must be a number greater than 1.0');
   }
-  const roundedOdds = roundToValidTick(params.odds);
 
   // Validate stake
   const stakeValidation = validateStake(params.stake);
@@ -182,7 +132,7 @@ export function buildWagerPayload(params: {
 
   const payload: PlaceWagerRequest = {
     line_id: params.line_id,
-    odds: roundedOdds,
+    odds: params.odds,
     stake: params.stake,
     external_id
   };
@@ -215,21 +165,7 @@ export function calculateReturn(odds: number, stake: number): number {
   return odds * stake;
 }
 
-/**
- * Clamps decimal odds to the nearest valid ladder tick
- * @param decimalPrice Decimal odds to clamp
- * @param ladder Array of valid decimal ladder values
- * @returns Nearest valid ladder price or original if ladder unavailable
- */
-export function clampToLadder(decimalPrice: number, ladder: number[]): number {
-  if (!ladder?.length) return decimalPrice;
-  let best = ladder[0], diff = Math.abs(decimalPrice - best);
-  for (const p of ladder) {
-    const d = Math.abs(decimalPrice - p);
-    if (d < diff) { best = p; diff = d; }
-  }
-  return best;
-}
+// clampToLadder function removed - now supports any integer American odds
 
 /**
  * Parses American odds from display string like "+150" or "-200"
