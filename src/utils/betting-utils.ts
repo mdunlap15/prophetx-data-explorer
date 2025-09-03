@@ -89,7 +89,7 @@ export function generateExternalId(prefix: string = 'wager'): string {
 export interface PlaceWagerRequest {
   /** Required: line_id from selection */
   line_id: string;
-  /** Required: odds in decimal format */
+  /** Required: odds in American format */
   odds: number;
   /** Required: stake amount */
   stake: number;
@@ -116,9 +116,10 @@ export function buildWagerPayload(params: {
     throw new Error('line_id is required and must be a string');
   }
 
-  // Validate odds (no rounding - accept any valid decimal odds)
-  if (typeof params.odds !== 'number' || params.odds <= 1.0) {
-    throw new Error('odds must be a number greater than 1.0');
+  // ProphetX expects American odds format, so convert decimal back to American
+  const americanOdds = decimalToAmerican(params.odds);
+  if (americanOdds === null) {
+    throw new Error('odds must be valid decimal odds that can convert to American format');
   }
 
   // Validate stake
@@ -132,7 +133,7 @@ export function buildWagerPayload(params: {
 
   const payload: PlaceWagerRequest = {
     line_id: params.line_id,
-    odds: params.odds,
+    odds: americanOdds, // Send American odds format
     stake: params.stake,
     external_id
   };
