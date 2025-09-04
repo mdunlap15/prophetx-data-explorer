@@ -401,7 +401,7 @@ class ProphetXAPI {
    * Response: { "data": { "success": boolean, "wager": Wager } }
    */
   async placeWager(request: PlaceWagerRequest): Promise<{ success: boolean; wager: any }> {
-    console.log('🎯 Placing wager with clamped odds:', request);
+    console.log('🎯 Placing wager with payload:', request);
     
     try {
       // Make direct request without using makeRequest wrapper for better error handling

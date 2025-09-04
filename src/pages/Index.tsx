@@ -10,7 +10,7 @@ import { DataTreeView } from '@/components/DataTreeView';
 import { prophetXAPI, TreeNode } from '@/services/prophetx-api';
 import { selectionCache, flattenSelectionCache } from '@/services/selection-cache';
 import { useWagerPolling } from '@/hooks/use-wager-polling';
-import { americanToDecimal, decimalToAmerican, parseDisplayOdds } from '@/utils/betting-utils';
+import { americanToDecimal, decimalToAmerican, parseDisplayOdds, buildWagerPayload } from '@/utils/betting-utils';
 
 export default function Index() {
   // Authentication state
@@ -173,12 +173,15 @@ export default function Index() {
     setWagerError(null);
     
     try {
-      const result = await prophetXAPI.placeWager({
+      // Use buildWagerPayload to convert decimal odds to American format
+      const wagerPayload = buildWagerPayload({
         line_id: activeSel.line_id,
         odds: decimalToSend,
         stake: Number(stakeInput),
         external_id: `px-${Date.now()}`
       });
+      
+      const result = await prophetXAPI.placeWager(wagerPayload);
       
       if (result.success && result.wager?.wager_id) {
         setLastWagerId(result.wager.wager_id);
@@ -345,7 +348,7 @@ export default function Index() {
                 <div className="text-xs text-muted-foreground">
                   Enter any integer American odds (e.g., +150, -200, +101, -102)
                   <br />
-                  Decimal to send: {Number.isFinite(decimalToSend) ? decimalToSend.toFixed(4) : 'N/A'}
+                  Decimal equivalent: {Number.isFinite(decimalToSend) ? decimalToSend.toFixed(4) : 'N/A'}
                 </div>
 
                 {wagerError && (
