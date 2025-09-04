@@ -9,7 +9,7 @@ import { AuthForm } from '@/components/AuthForm';
 import { DataTreeView } from '@/components/DataTreeView';
 import { prophetXAPI, TreeNode } from '@/services/prophetx-api';
 import { selectionCache, flattenSelectionCache } from '@/services/selection-cache';
-import { useWagerPolling } from '@/hooks/use-wager-polling';
+import { useEnhancedWagers } from '@/hooks/use-enhanced-wagers';
 import { americanToDecimal, decimalToAmerican, parseDisplayOdds, buildWagerPayload } from '@/utils/betting-utils';
 
 export default function Index() {
@@ -38,10 +38,11 @@ export default function Index() {
   const [wagerError, setWagerError] = useState<string | null>(null);
   const [isPlacingWager, setIsPlacingWager] = useState(false);
 
-  // Wager polling
-  const { wagers, isLoading: isWagersLoading, refresh: refreshWagers } = useWagerPolling({
+  // Enhanced wager polling with display data
+  const { wagers, refresh: refreshWagers } = useEnhancedWagers({
     enabled: isAuthenticated,
-    pollInterval: 15000
+    pollInterval: 15000, // 15 seconds
+    treeData // Pass tree data for enrichment
   });
 
   // Test wager state
@@ -388,11 +389,7 @@ export default function Index() {
               </CardTitle>
             </CardHeader>
             <CardContent>
-              {isWagersLoading && wagers.length === 0 ? (
-                <div className="text-center py-4 text-muted-foreground">
-                  Loading wagers...
-                </div>
-              ) : wagers.length === 0 ? (
+              {wagers.length === 0 ? (
                 <div className="text-center py-4 text-muted-foreground">
                   No wagers found
                 </div>
@@ -401,20 +398,18 @@ export default function Index() {
                   {wagers.map((wager) => (
                     <div key={wager.wager_id} className="p-3 border rounded-lg text-sm">
                       <div className="flex justify-between items-start">
-                        <div>
-                          <div className="font-medium">
-                            {wager.external_id}
+                        <div className="flex-1 min-w-0">
+                          <div className="font-medium text-sm truncate">
+                            {wager.displayData.wagerType} • {wager.displayData.wagerMarket}
                           </div>
-                          <div className="text-muted-foreground">
-                            Stake: {wager.stake} • Odds: {wager.odds}
-                          </div>
-                          <div className="text-xs text-muted-foreground">
-                            {wager.wager_id} • Line: {wager.line_id}
+                          <div className="text-muted-foreground text-sm mt-1">
+                            {wager.displayData.selectionName} • Stake: {wager.displayData.formattedStake} • Odds: {wager.displayData.formattedOdds}
                           </div>
                         </div>
-                        <div className="flex flex-col items-end gap-1">
+                        <div className="flex flex-col items-end gap-1 ml-2">
                           <Badge 
                             variant={wager.status === 'open' ? 'default' : 'secondary'}
+                            className="text-xs"
                           >
                             {wager.status}
                           </Badge>
@@ -424,6 +419,7 @@ export default function Index() {
                               wager.matching_status === 'partially_matched' ? 'secondary' : 
                               'outline'
                             }
+                            className="text-xs"
                           >
                             {wager.matching_status}
                           </Badge>
