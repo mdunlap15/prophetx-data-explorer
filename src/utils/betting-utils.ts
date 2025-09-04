@@ -37,7 +37,26 @@ export function parseAmericanString(s: string): number {
   return sign * Math.round(n);
 }
 
-// Odds ladder functionality removed - now supports any integer American odds
+/**
+ * Validates American odds for ProphetX API compatibility
+ * ProphetX may have specific tick requirements (e.g., multiples of 5)
+ */
+export function validateAmericanOdds(odds: number): { valid: boolean; error?: string } {
+  if (!Number.isInteger(odds) || odds === 0) {
+    return { valid: false, error: 'Odds must be a non-zero integer' };
+  }
+  
+  if (odds >= -109 && odds <= 109 && odds !== 100 && odds !== -100) {
+    return { valid: false, error: 'Odds between -109 and 109 (except ±100) are not allowed' };
+  }
+  
+  // Check if odds are multiples of 5 (common sportsbook requirement)
+  if (Math.abs(odds) % 5 !== 0) {
+    return { valid: false, error: 'Odds must be multiples of 5 (e.g., 185, 190, not 187)' };
+  }
+  
+  return { valid: true };
+}
 
 /**
  * Validates stake amount according to ProphetX rules
@@ -120,6 +139,12 @@ export function buildWagerPayload(params: {
   const americanOdds = decimalToAmerican(params.odds);
   if (americanOdds === null) {
     throw new Error('odds must be valid decimal odds that can convert to American format');
+  }
+
+  // Validate American odds format for ProphetX compatibility
+  const oddsValidation = validateAmericanOdds(americanOdds);
+  if (!oddsValidation.valid) {
+    throw new Error(`Invalid odds: ${oddsValidation.error}`);
   }
 
   // Validate stake

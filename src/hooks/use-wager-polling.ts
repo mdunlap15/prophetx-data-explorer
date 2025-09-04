@@ -68,11 +68,14 @@ export function useWagerPolling(options: UseWagerPollingOptions = {}): WagerPoll
       if (marketId) params.market_id = marketId;
 
       const allWagers = await prophetXAPI.getMyWagers(params);
+      
+      // Filter out canceled wagers - users want them to disappear permanently
+      const activeWagers = allWagers.filter(wager => wager.status !== 'canceled');
 
       if (append) {
-        setWagers(prev => [...prev, ...allWagers]);
+        setWagers(prev => [...prev, ...activeWagers]);
       } else {
-        setWagers(allWagers);
+        setWagers(activeWagers);
       }
 
       setNextCursor(undefined); // Updated API handles pagination internally

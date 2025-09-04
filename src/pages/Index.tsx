@@ -347,7 +347,7 @@ export default function Index() {
 
                 {/* Helper Text */}
                 <div className="text-xs text-muted-foreground">
-                  Enter any integer American odds (e.g., +150, -200, +101, -102)
+                  Enter American odds in multiples of 5 (e.g., +150, -200, +185, -195)
                   <br />
                   Decimal equivalent: {Number.isFinite(decimalToSend) ? decimalToSend.toFixed(4) : 'N/A'}
                 </div>

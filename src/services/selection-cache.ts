@@ -89,13 +89,21 @@ class SelectionCache {
                         for (const selection of selectionGroup.children) {
                           totalSelections++;
                           
-                          // Accept either data.line_id OR node.id as line_id source
+                          // Debug: log the selection structure to understand line_id location
+                          console.log(`🔍 Selection structure:`, {
+                            name: selection.name,
+                            id: selection.id,
+                            data: selection.data,
+                            dataKeys: selection.data ? Object.keys(selection.data) : 'no data'
+                          });
+
+                          // Try multiple possible line_id sources
                           const lineId = 
                             (selection.data?.line_id as string) ||
                             (selection.id as string);
 
                           if (!lineId || typeof lineId !== 'string') {
-                            console.log(`⚠️ Skipping selection without line_id: ${selection.name}`);
+                            console.log(`⚠️ Skipping selection without line_id: ${selection.name}`, selection);
                             continue;
                           }
 
