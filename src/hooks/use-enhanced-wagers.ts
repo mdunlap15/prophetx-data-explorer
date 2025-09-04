@@ -81,11 +81,9 @@ function enrichWagerData(wager: WagerHistory, treeData?: TreeNode[]) {
     selectionName = selection.name || 'Unknown Selection';
   }
 
-  // Format odds and stake
-  const americanOdds = decimalToAmerican(wager.odds);
-  const formattedOdds = americanOdds !== null 
-    ? (americanOdds > 0 ? `+${americanOdds}` : `${americanOdds}`)
-    : `${wager.odds.toFixed(2)}`;
+  // Format odds - ProphetX API already stores American odds
+  const americanOdds = Math.round(wager.odds);
+  const formattedOdds = americanOdds > 0 ? `+${americanOdds}` : `${americanOdds}`;
   
   const formattedStake = wager.stake.toString();
 

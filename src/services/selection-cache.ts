@@ -97,7 +97,7 @@ class SelectionCache {
                             dataKeys: selection.data ? Object.keys(selection.data) : 'no data'
                           });
 
-                          // Try multiple possible line_id sources
+                          // Try multiple possible line_id sources  
                           const lineId = 
                             (selection.data?.line_id as string) ||
                             (selection.id as string);
